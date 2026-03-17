@@ -126,7 +126,7 @@ class EffectControls(tk.Frame):
 
     # Slider definitions: (attr_name, label, min, max, default, resolution, unit)
     _SLIDERS = [
-        ("input_gain", "🎙️ Mic Boost", 1.0, 16.0, 8.0, 0.5, "x"),
+        ("input_gain", "🎙️ Mic Boost", 1.0, 16.0, 5.0, 0.5, "x"),
         ("pitch_shift", "Pitch Shift", MIN_PITCH_SHIFT, MAX_PITCH_SHIFT, 0.0, 0.5, "st"),
         ("formant_shift", "Formant Shift", MIN_FORMANT_SHIFT, MAX_FORMANT_SHIFT, 0.0, 0.5, "st"),
         ("reverb_level", "Reverb", MIN_REVERB, MAX_REVERB, 0.0, 0.01, ""),
@@ -162,7 +162,7 @@ class EffectControls(tk.Frame):
 
     def load_from_profile(self, profile: "VoiceProfile") -> None:  # noqa: F821
         """Apply profile settings to all sliders."""
-        self.set_param("input_gain", 8.0)  # always start with default boost
+        self.set_param("input_gain", 5.0)  # always start with default boost
         self.set_param("pitch_shift", profile.pitch_shift)
         self.set_param("formant_shift", profile.formant_shift)
         self.set_param("reverb_level", profile.reverb_level)

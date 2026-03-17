@@ -5,7 +5,7 @@
     "pitch_shift": 0,
     "formant_shift": 0,
     "reverb_level": 0.0,
-    "noise_gate_threshold": -60,
+    "noise_gate_threshold": -35,
     "gain": 1.0,
     "use_ai": true,
     "ai_model_path": "models/your_model.pth",

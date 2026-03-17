@@ -5,7 +5,7 @@
     "pitch_shift": -4.0,
     "formant_shift": -3.0,
     "reverb_level": 0.3,
-    "noise_gate_threshold": -60,
+    "noise_gate_threshold": -35,
     "gain": 1.2,
     "voice_disguise": 1.0,
     "use_ai": false

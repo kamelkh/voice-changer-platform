@@ -232,7 +232,7 @@ class NoiseGate(IAudioEffect):
     Uses a short hysteresis window to avoid chattering.
     """
 
-    def __init__(self, threshold_db: float = -40.0,
+    def __init__(self, threshold_db: float = -30.0,
                  attack_ms: float = 5.0, release_ms: float = 50.0) -> None:
         self.threshold_db = float(threshold_db)
         self.attack_ms = float(attack_ms)
@@ -473,9 +473,10 @@ class VoiceDisguise(IAudioEffect):
         in_rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
 
         # ── 1. Band-limited spectral noise (300–3000 Hz) ─────────────────
-        # Reduced noise factor: 0.06 instead of 0.18 — just enough to
-        # break speaker-ID features without overwhelming the signal.
-        noise_factor = 0.06
+        # Very light noise — the formant smearing and micro-pitch
+        # modulation do the real disguising work.  Keep noise minimal
+        # to avoid audible hiss.
+        noise_factor = 0.008
         noise = np.random.randn(n).astype(np.float32) * in_rms * self.intensity * noise_factor
 
         # Build bandpass filter once per sample-rate

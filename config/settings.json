@@ -9,7 +9,7 @@
     "use_gpu": true,
     "latency_preset": "balanced",
     "max_latency_ms": 100,
-    "input_gain": 8.0
+    "input_gain": 5.0
   },
   "ui": {
     "theme": "dark",

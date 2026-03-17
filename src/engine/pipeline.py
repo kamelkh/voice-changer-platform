@@ -47,7 +47,7 @@ class AudioPipeline:
         # Input gain boost — compensates for quiet microphones (e.g. Galaxy
         # Buds Bluetooth at 16 kHz typically deliver RMS ~0.002 while normal
         # speech needs ~0.05).  Set via settings["processing"]["input_gain"].
-        self.input_gain: float = 8.0  # +18 dB default
+        self.input_gain: float = 5.0  # +14 dB default
 
     # ── Effect management ─────────────────────────────────────────────────────
 
@@ -143,12 +143,13 @@ class AudioPipeline:
                 logger.error("Effect %s error: %s", effect.name, exc)
 
         # Pipeline-level RMS normalization: prevent cumulative signal loss
-        # from multiple effects.  Only scale up, never attenuate — this
-        # guards against the chain eating signal energy.
+        # from multiple effects.  Only scale up (never attenuate) and only
+        # when there is actual speech – skip for quiet/gated chunks to
+        # avoid boosting noise.
         out_rms = float(np.sqrt(np.mean(result ** 2))) + 1e-10
-        if out_rms < in_rms * 0.5:
-            # Signal lost more than 6 dB – restore to ~90 % of input RMS
-            scale = (in_rms * 0.9) / out_rms
+        if in_rms > 0.005 and out_rms < in_rms * 0.5:
+            # Signal lost more than 6 dB – restore to ~80 % of input RMS
+            scale = (in_rms * 0.8) / out_rms
             result = np.clip(result * scale, -1.0, 1.0).astype(np.float32)
 
         self._last_process_time_ms = (time.perf_counter() - t0) * 1000.0
@@ -185,13 +186,22 @@ class AudioPipeline:
         if profile.reverb_level > 0.0:
             self.add_effect(ReverbEffect(wet_level=profile.reverb_level))
 
-        # Always add a compressor to even out volume and boost weak signals
+        # Compressor evens out volume – reduced makeup to avoid
+        # amplifying background noise from Bluetooth mics.
         self.add_effect(Compressor(
             threshold_db=-25.0,
             ratio=3.0,
             attack_ms=5.0,
             release_ms=100.0,
-            makeup_gain_db=8.0,   # +8 dB makeup to compensate quiet input
+            makeup_gain_db=3.0,   # +3 dB makeup (was +8 – caused noise)
+        ))
+
+        # Second noise gate at the END of the chain catches any noise
+        # that the compressor / effects boosted.
+        self.add_effect(NoiseGate(
+            threshold_db=-35.0,
+            attack_ms=2.0,
+            release_ms=40.0,
         ))
 
         if profile.gain != 1.0:
