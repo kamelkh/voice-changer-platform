@@ -149,15 +149,19 @@ class PitchShifter(IAudioEffect):
         return np.concatenate([out, np.zeros(n - len(out), dtype=np.float32)])
 
     def _process_cpu(self, mono: np.ndarray) -> np.ndarray:
-        """CPU fallback using scipy.signal.resample (FFT-based)."""
+        """CPU pitch shift using linear interpolation (no FFT leakage).
+
+        Unlike scipy.signal.resample, linear interpolation does not
+        introduce spectral-leakage artefacts at chunk boundaries,
+        which eliminates the robotic / metallic sound on small chunks.
+        """
         n = len(mono)
         ratio = 2.0 ** (self.semitones / 12.0)
-        new_len = max(1, int(round(n / ratio)))
-        resampled = signal.resample(mono, new_len).astype(np.float32)
-        if len(resampled) >= n:
-            return resampled[:n]
-        return np.concatenate([resampled,
-                                np.zeros(n - len(resampled), dtype=np.float32)])
+        # Read the input at a different speed, then take exactly n samples.
+        # ratio > 1 → read faster → higher pitch; ratio < 1 → slower → lower.
+        src_indices = np.arange(n, dtype=np.float32) / ratio
+        src_indices = np.clip(src_indices, 0, n - 1)
+        return np.interp(src_indices, np.arange(n, dtype=np.float32), mono).astype(np.float32)
 
     def get_params(self) -> dict[str, Any]:
         return {"semitones": self.semitones}

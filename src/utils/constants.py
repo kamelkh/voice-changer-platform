@@ -24,19 +24,19 @@ SETTINGS_FILE: Path = CONFIG_DIR / "settings.json"
 # 48 kHz is native for WASAPI / most voice apps (Zoom, Discord, WhatsApp)
 DEFAULT_SAMPLE_RATE: int = 48000
 DEFAULT_CHANNELS: int = 1
-# 1024 frames @ 16 kHz = 64 ms per chunk — good balance between latency and
-# processing throughput (avoids per-chunk overhead dominating at 256 frames).
-DEFAULT_CHUNK_SIZE: int = 1024
-DEFAULT_BUFFER_SIZE: int = 4096
+# 512 frames @ 16 kHz = 32 ms per chunk — low latency while keeping FFT
+# effects working cleanly (minimum 512 samples for spectral processing).
+DEFAULT_CHUNK_SIZE: int = 512
+DEFAULT_BUFFER_SIZE: int = 2048
 DEFAULT_DTYPE: str = "float32"
 
 # ── Low-latency presets ───────────────────────────────────────────────────────
 # Minimum 512 frames: FFT-based effects (PitchShifter, FormantShifter,
 # VoiceDisguise) need ≥512 samples to avoid spectral artefacts.
 LATENCY_PRESETS: dict = {
-    "low":     {"chunk_size": 512,  "buffer_size": 2048, "label": "Low    (~32 ms)"},
-    "balanced":{"chunk_size": 1024, "buffer_size": 4096, "label": "Balanced (~64 ms)"},
-    "safe":    {"chunk_size": 2048, "buffer_size": 8192, "label": "Safe   (~128 ms)"},
+    "low":     {"chunk_size": 512,  "buffer_size": 1024, "label": "Low    (~32 ms)"},
+    "balanced":{"chunk_size": 512,  "buffer_size": 2048, "label": "Balanced (~32 ms)"},
+    "safe":    {"chunk_size": 1024, "buffer_size": 4096, "label": "Safe   (~64 ms)"},
 }
 
 # ── VB-Audio Virtual Cable ────────────────────────────────────────────────────

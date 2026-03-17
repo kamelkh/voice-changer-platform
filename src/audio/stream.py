@@ -90,8 +90,9 @@ class AudioStream:
         self._running = False
 
         # Dedicated processing thread + input queue (decouples capture ↔ process
-        # so the PortAudio callback is never blocked by heavy DSP work)
-        self._proc_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
+        # so the PortAudio callback is never blocked by heavy DSP work).
+        # maxsize=8 keeps maximum queue-induced latency ≤ 8 × chunk_ms.
+        self._proc_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=8)
         self._proc_thread: Optional[threading.Thread] = None
 
         # Monitor callback (for live preview through headphones)
@@ -303,16 +304,33 @@ class AudioStream:
                 )
 
     def _maybe_resample(self, audio: np.ndarray) -> np.ndarray:
-        """Resample audio if input/output sample rates differ."""
+        """Resample audio if input/output sample rates differ.
+
+        For integer upsampling (e.g. 16 kHz → 48 kHz = 3×) uses fast
+        linear interpolation instead of polyphase filtering.
+        """
         if self._rs_up == self._rs_down:
             return audio
         mono = audio.ndim == 1
-        if mono:
-            audio = audio.reshape(-1, 1)
-        channels = audio.shape[1]
+        data = audio if not mono else audio.reshape(-1, 1)
+        channels = data.shape[1]
+        n = data.shape[0]
+
+        # Fast path: integer upsampling (the common 16→48 kHz case)
+        if self._rs_down == 1 and self._rs_up <= 6:
+            out_n = n * self._rs_up
+            x_old = np.arange(n, dtype=np.float32)
+            x_new = np.linspace(0, n - 1, out_n, dtype=np.float32)
+            out_cols = []
+            for ch in range(channels):
+                out_cols.append(np.interp(x_new, x_old, data[:, ch].astype(np.float32)))
+            result = np.stack(out_cols, axis=1).astype(np.float32)
+            return result[:, 0] if mono else result
+
+        # General case: polyphase resampling
         out_cols = []
         for ch in range(channels):
-            col = resample_poly(audio[:, ch].astype(np.float32),
+            col = resample_poly(data[:, ch].astype(np.float32),
                                 self._rs_up, self._rs_down)
             out_cols.append(col)
         result = np.stack(out_cols, axis=1).astype(np.float32)

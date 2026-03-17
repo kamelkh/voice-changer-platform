@@ -49,6 +49,11 @@ class AudioPipeline:
         # speech needs ~0.05).  Set via settings["processing"]["input_gain"].
         self.input_gain: float = 5.0  # +14 dB default
 
+        # Cross-fade between consecutive chunks eliminates boundary
+        # discontinuities that cause robotic / metallic artifacts.
+        self._XFADE_LEN: int = 64  # samples (~4 ms at 16 kHz)
+        self._prev_tail: Optional[np.ndarray] = None
+
     # ── Effect management ─────────────────────────────────────────────────────
 
     def add_effect(self, effect: IAudioEffect) -> None:
@@ -151,6 +156,16 @@ class AudioPipeline:
             # Signal lost more than 6 dB – restore to ~80 % of input RMS
             scale = (in_rms * 0.8) / out_rms
             result = np.clip(result * scale, -1.0, 1.0).astype(np.float32)
+
+        # ── Cross-fade with previous chunk tail ────────────────────────
+        # Smooths out any discontinuity at chunk boundaries, removing the
+        # robotic / clicky artefacts caused by per-chunk FFT processing.
+        xf = self._XFADE_LEN
+        if self._prev_tail is not None and len(result) > xf:
+            fade_in = np.linspace(0.0, 1.0, xf, dtype=np.float32)
+            result[:xf] = result[:xf] * fade_in + self._prev_tail * (1.0 - fade_in)
+        if len(result) > xf:
+            self._prev_tail = result[-xf:].copy()
 
         self._last_process_time_ms = (time.perf_counter() - t0) * 1000.0
         return result
