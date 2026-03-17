@@ -1,0 +1,11 @@
+{
+    "name": "Robot",
+    "description": "Robotic metallic voice",
+    "icon": "🤖",
+    "pitch_shift": 0.0,
+    "formant_shift": 0.0,
+    "reverb_level": 0.4,
+    "noise_gate_threshold": -30,
+    "gain": 1.2,
+    "use_ai": false
+}

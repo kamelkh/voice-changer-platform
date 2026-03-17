@@ -1,0 +1,9 @@
+# Place your RVC voice model (.pth) files in this directory.
+# Also place the corresponding .index files here.
+#
+# Example structure:
+#   models/
+#     my_voice.pth
+#     my_voice.index
+#     another_voice.pth
+#     another_voice.index

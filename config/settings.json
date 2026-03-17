@@ -1,0 +1,22 @@
+{
+    "audio": {
+        "sample_rate": 48000,
+        "channels": 1,
+        "chunk_size": 256,
+        "buffer_size": 1024
+    },
+    "processing": {
+        "use_gpu": true,
+        "latency_preset": "low",
+        "max_latency_ms": 20
+    },
+    "ui": {
+        "theme": "dark",
+        "language": "en",
+        "window_width": 960,
+        "window_height": 700
+    },
+    "default_input_device": "",
+    "default_output_device": "",
+    "last_profile": "deep_male"
+}

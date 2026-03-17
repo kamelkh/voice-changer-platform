@@ -1,0 +1,11 @@
+{
+    "name": "Deep Male",
+    "description": "Deep masculine voice",
+    "icon": "🧔",
+    "pitch_shift": -4.0,
+    "formant_shift": -2.0,
+    "reverb_level": 0.1,
+    "noise_gate_threshold": -40,
+    "gain": 1.0,
+    "use_ai": false
+}

@@ -1,0 +1,16 @@
+{
+    "name": "AI Voice Clone",
+    "description": "AI-powered voice conversion using RVC model",
+    "icon": "🎭",
+    "pitch_shift": 0,
+    "formant_shift": 0,
+    "reverb_level": 0.0,
+    "noise_gate_threshold": -40,
+    "gain": 1.0,
+    "use_ai": true,
+    "ai_model_path": "models/your_model.pth",
+    "ai_index_rate": 0.5,
+    "ai_pitch_shift": 0,
+    "ai_protect": 0.33,
+    "ai_f0_method": "rmvpe"
+}
