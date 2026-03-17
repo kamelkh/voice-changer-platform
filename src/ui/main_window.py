@@ -306,10 +306,13 @@ class MainWindow:
             self._status_bar.set_message("Monitor OFF")
 
     def _on_profile_selected(self, key: str, profile) -> None:
-        """Called when a profile card is clicked."""
+        """Called when a profile card is clicked.
+
+        Note: profile_manager.activate() already fires _on_profile_changed
+        which calls apply_profile, so we only update the UI sliders here.
+        """
         logger.info("Profile activated in UI: %s", key)
         self._effect_controls.load_from_profile(profile)
-        self._app.apply_profile(profile)
 
         # Show AI indicator
         if profile.use_ai and profile.ai_model_path:

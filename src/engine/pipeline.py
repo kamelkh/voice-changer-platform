@@ -186,22 +186,13 @@ class AudioPipeline:
         if profile.reverb_level > 0.0:
             self.add_effect(ReverbEffect(wet_level=profile.reverb_level))
 
-        # Compressor evens out volume – reduced makeup to avoid
-        # amplifying background noise from Bluetooth mics.
+        # Compressor evens out volume
         self.add_effect(Compressor(
             threshold_db=-25.0,
             ratio=3.0,
             attack_ms=5.0,
             release_ms=100.0,
-            makeup_gain_db=3.0,   # +3 dB makeup (was +8 – caused noise)
-        ))
-
-        # Second noise gate at the END of the chain catches any noise
-        # that the compressor / effects boosted.
-        self.add_effect(NoiseGate(
-            threshold_db=-35.0,
-            attack_ms=2.0,
-            release_ms=40.0,
+            makeup_gain_db=4.0,   # +4 dB makeup
         ))
 
         if profile.gain != 1.0:

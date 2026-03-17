@@ -1,0 +1,171 @@
+2026-03-18 00:48:19 [INFO] src.engine.effects: PitchShifter: CUDA GPU detected (NVIDIA GeForce RTX 3070) — using GPU acceleration.
+2026-03-18 00:48:19 [INFO] src.app: Initialising VoiceChangerApp…
+2026-03-18 00:48:19 [DEBUG] src.app: Settings loaded from C:\Users\User\OneDrive\מסמכים\GitHub\voice-changer-platform\config\settings.json
+2026-03-18 00:48:19 [DEBUG] src.audio.devices: Found 55 audio devices.
+2026-03-18 00:48:19 [INFO] src.engine.model_manager: Model catalog refreshed: 0 model(s) found.
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: anonymous (Anonymous)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: child (Child)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: chipmunk (Chipmunk)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: custom_ai (AI Voice Clone)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: deep_male (Deep Male)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: demon (Demon)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: echo_hall (Echo Hall)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: female (Female)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: old_man (Old Man)
+2026-03-18 00:48:19 [DEBUG] src.profiles.profile_manager: Loaded profile: robot (Robot)
+2026-03-18 00:48:19 [INFO] src.profiles.profile_manager: Loaded 10 profile(s).
+2026-03-18 00:48:19 [INFO] src.profiles.profile_manager: Active profile: deep_male – Deep Male
+2026-03-18 00:48:19 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:21 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:21 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:21 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:21 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:48:21 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:21 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:21 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:21 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Deep Male' (8 effects).
+2026-03-18 00:48:21 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:21 [INFO] src.audio.devices: VB-Cable detected (WASAPI): CABLE Input (VB-Audio Virtual Cable)
+2026-03-18 00:48:21 [INFO] src.app: VoiceChangerApp ready.
+2026-03-18 00:48:23 [DEBUG] src.audio.devices: Found 55 audio devices.
+2026-03-18 00:48:23 [INFO] src.audio.devices: VB-Cable detected (WASAPI): CABLE Input (VB-Audio Virtual Cable)
+2026-03-18 00:48:26 [INFO] src.ui.device_selector: Input device selected: [37] Headset (Galaxy Buds3 Pro (C52A))
+2026-03-18 00:48:26 [INFO] src.app: [DEVICE] set_input_device → index=37
+2026-03-18 00:48:35 [INFO] src.audio.devices: VB-Cable detected (WASAPI): CABLE Input (VB-Audio Virtual Cable)
+2026-03-18 00:48:35 [INFO] src.app: [START] input  device : [37] Headset (Galaxy Buds3 Pro (C52A))
+2026-03-18 00:48:35 [INFO] src.app: [START] output device : [32] CABLE Input (VB-Audio Virtual Cable)
+2026-03-18 00:48:35 [INFO] src.app: [START] native rates — input: 16000 Hz  output: 48000 Hz
+2026-03-18 00:48:35 [INFO] src.app: [START] trying input=16000 Hz  output=48000 Hz …
+2026-03-18 00:48:35 [INFO] src.audio.output: AudioOutput started – device=32 sr=48000 ch=1 chunk=1024
+2026-03-18 00:48:35 [DEBUG] src.audio.capture: [CAPTURE] opening InputStream: device=37 sr=16000 ch=1 chunk=1024 dtype=float32
+2026-03-18 00:48:35 [INFO] src.audio.capture: AudioCapture started – device=37 sr=16000 ch=1 chunk=1024
+2026-03-18 00:48:35 [INFO] src.audio.stream: AudioStream started.
+2026-03-18 00:48:35 [INFO] src.app: [START] SUCCESS  input=16000 Hz  output=48000 Hz
+2026-03-18 00:48:35 [INFO] src.audio.stream: [STREAM] chunk #1  in_rms=0.003988  latency=2.6ms  q=0
+2026-03-18 00:48:45 [INFO] src.ui.profile_selector: Profile selected: child - Child
+2026-03-18 00:48:45 [INFO] src.profiles.profile_manager: Active profile: child – Child
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:45 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Child' (7 effects).
+2026-03-18 00:48:45 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:45 [INFO] src.ui.main_window: Profile activated in UI: child
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:45 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:45 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Child' (7 effects).
+2026-03-18 00:48:45 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:48 [INFO] src.audio.stream: [STREAM] chunk #201  in_rms=0.002127  latency=2.2ms  q=0
+2026-03-18 00:48:50 [INFO] src.ui.profile_selector: Profile selected: demon - Demon
+2026-03-18 00:48:50 [INFO] src.profiles.profile_manager: Active profile: demon – Demon
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:50 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Demon' (8 effects).
+2026-03-18 00:48:50 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:50 [INFO] src.ui.main_window: Profile activated in UI: demon
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:50 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:50 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Demon' (8 effects).
+2026-03-18 00:48:50 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:55 [INFO] src.ui.profile_selector: Profile selected: anonymous - Anonymous
+2026-03-18 00:48:55 [INFO] src.profiles.profile_manager: Active profile: anonymous – Anonymous
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:55 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Anonymous' (8 effects).
+2026-03-18 00:48:55 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:55 [INFO] src.ui.main_window: Profile activated in UI: anonymous
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:55 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:55 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Anonymous' (8 effects).
+2026-03-18 00:48:55 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:58 [INFO] src.ui.profile_selector: Profile selected: deep_male - Deep Male
+2026-03-18 00:48:58 [INFO] src.profiles.profile_manager: Active profile: deep_male – Deep Male
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:58 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Deep Male' (8 effects).
+2026-03-18 00:48:58 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:48:58 [INFO] src.ui.main_window: Profile activated in UI: deep_male
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:48:58 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:48:58 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Deep Male' (8 effects).
+2026-03-18 00:48:58 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:49:01 [INFO] src.audio.stream: [STREAM] chunk #401  in_rms=0.004198  latency=1.5ms  q=0
+2026-03-18 00:49:06 [INFO] src.ui.profile_selector: Profile selected: robot - Robot
+2026-03-18 00:49:06 [INFO] src.profiles.profile_manager: Active profile: robot – Robot
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:49:06 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Robot' (8 effects).
+2026-03-18 00:49:06 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:49:06 [INFO] src.ui.main_window: Profile activated in UI: robot
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: VoiceDisguise
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: Compressor
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-18 00:49:06 [DEBUG] src.engine.pipeline: Added effect: VolumeControl
+2026-03-18 00:49:06 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Robot' (8 effects).
+2026-03-18 00:49:06 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-18 00:49:14 [INFO] src.audio.stream: [STREAM] chunk #601  in_rms=0.011124  latency=1.1ms  q=0
+2026-03-18 00:49:21 [INFO] src.app: [MONITOR] Starting record-playback monitor on device [33] Headphones (Galaxy Buds3 Pro (C52A)) @ 48000 Hz
+2026-03-18 00:49:21 [INFO] src.app: [MONITOR] Monitor started (record-then-playback mode).
+2026-03-18 00:49:25 [INFO] src.app: [MONITOR] Monitor stopped.
+2026-03-18 00:49:26 [INFO] src.audio.stream: [STREAM] chunk #801  in_rms=0.000881  latency=1.1ms  q=0
+2026-03-18 00:49:37 [INFO] src.ui.main_window: Window close requested.
+2026-03-18 00:49:37 [INFO] src.audio.capture: AudioCapture stopped.
+2026-03-18 00:49:37 [INFO] src.audio.output: AudioOutput stopped.
+2026-03-18 00:49:37 [INFO] src.audio.stream: AudioStream stopped.
+2026-03-18 00:49:37 [INFO] src.app: Audio stream stopped.
+2026-03-18 00:49:37 [INFO] src.app: [MONITOR] Monitor stopped.
+2026-03-18 00:49:37 [INFO] src.app: VoiceChangerApp shutdown complete.

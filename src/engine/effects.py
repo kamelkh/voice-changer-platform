@@ -232,8 +232,8 @@ class NoiseGate(IAudioEffect):
     Uses a short hysteresis window to avoid chattering.
     """
 
-    def __init__(self, threshold_db: float = -30.0,
-                 attack_ms: float = 5.0, release_ms: float = 50.0) -> None:
+    def __init__(self, threshold_db: float = -50.0,
+                 attack_ms: float = 2.0, release_ms: float = 150.0) -> None:
         self.threshold_db = float(threshold_db)
         self.attack_ms = float(attack_ms)
         self.release_ms = float(release_ms)
@@ -501,8 +501,8 @@ class VoiceDisguise(IAudioEffect):
 
         # ── 2. Micro-pitch modulation (irregular vibrato) ────────────────
         t = np.arange(n, dtype=np.float32) / sample_rate + self._phase
-        mod_freq = 3.5 + self.intensity * 2.5          # 3.5 – 6.0 Hz
-        mod_depth = 0.002 + self.intensity * 0.006      # samples of shift
+        mod_freq = 2.0 + self.intensity * 1.5          # 2.0 – 3.5 Hz (gentle)
+        mod_depth = 0.0005 + self.intensity * 0.0015     # very subtle shift
         phase_offset = mod_depth * np.sin(2.0 * np.pi * mod_freq * t)
         # Bound phase to prevent float overflow after long sessions
         self._phase = (self._phase + n / sample_rate) % 100.0
@@ -515,7 +515,7 @@ class VoiceDisguise(IAudioEffect):
         spec = np.fft.rfft(modulated)
         n_bins = len(spec)
         # Slight random warp factor that changes each chunk
-        warp = 1.0 + (np.random.rand() - 0.5) * 0.08 * self.intensity
+        warp = 1.0 + (np.random.rand() - 0.5) * 0.03 * self.intensity
         old_bins = np.arange(n_bins, dtype=np.float32)
         new_bins = old_bins / warp
         # Edge-value extrapolation (no left=0/right=0 zeroing)
