@@ -187,18 +187,30 @@ class FormantShifter(IAudioEffect):
             return audio_data
 
         mono, was_2d, channels = self._to_mono_1d(audio_data)
-        ratio = 2.0 ** (self.semitones / 12.0)
         n = len(mono)
+        if n < 16:
+            return audio_data
+
+        # Measure input RMS for preservation
+        in_rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
+
+        ratio = 2.0 ** (self.semitones / 12.0)
 
         spec = np.fft.rfft(mono)
         freqs = np.arange(len(spec), dtype=np.float32)
         warped = freqs / ratio
 
-        real = np.interp(freqs, warped, spec.real, left=0.0, right=0.0)
-        imag = np.interp(freqs, warped, spec.imag, left=0.0, right=0.0)
+        # Use edge-value extrapolation (no left/right=0 zeroing)
+        real = np.interp(freqs, warped, spec.real)
+        imag = np.interp(freqs, warped, spec.imag)
         out = np.fft.irfft(real + 1j * imag)[:n].astype(np.float32)
         if len(out) < n:
             out = np.pad(out, (0, n - len(out)))
+
+        # Preserve RMS level
+        out_rms = float(np.sqrt(np.mean(out ** 2))) + 1e-10
+        out *= (in_rms / out_rms)
+        out = np.clip(out, -1.0, 1.0).astype(np.float32)
 
         return self._restore(out, was_2d, channels)
 
@@ -454,12 +466,17 @@ class VoiceDisguise(IAudioEffect):
 
         mono, was_2d, channels = self._to_mono_1d(audio_data)
         n = len(mono)
-        if n < 4:
+        if n < 64:
             return audio_data
 
+        # Measure input RMS for preservation
+        in_rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
+
         # ── 1. Band-limited spectral noise (300–3000 Hz) ─────────────────
-        rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
-        noise = np.random.randn(n).astype(np.float32) * rms * self.intensity * 0.18
+        # Reduced noise factor: 0.06 instead of 0.18 — just enough to
+        # break speaker-ID features without overwhelming the signal.
+        noise_factor = 0.06
+        noise = np.random.randn(n).astype(np.float32) * in_rms * self.intensity * noise_factor
 
         # Build bandpass filter once per sample-rate
         if self._bp_b is None or self._bp_sr != sample_rate:
@@ -486,7 +503,8 @@ class VoiceDisguise(IAudioEffect):
         mod_freq = 3.5 + self.intensity * 2.5          # 3.5 – 6.0 Hz
         mod_depth = 0.002 + self.intensity * 0.006      # samples of shift
         phase_offset = mod_depth * np.sin(2.0 * np.pi * mod_freq * t)
-        self._phase += n / sample_rate
+        # Bound phase to prevent float overflow after long sessions
+        self._phase = (self._phase + n / sample_rate) % 100.0
 
         indices = np.arange(n, dtype=np.float32) + phase_offset * sample_rate * 0.001
         indices = np.clip(indices, 0, n - 1)
@@ -499,8 +517,9 @@ class VoiceDisguise(IAudioEffect):
         warp = 1.0 + (np.random.rand() - 0.5) * 0.08 * self.intensity
         old_bins = np.arange(n_bins, dtype=np.float32)
         new_bins = old_bins / warp
-        spec_real = np.interp(old_bins, new_bins, spec.real, left=0, right=0)
-        spec_imag = np.interp(old_bins, new_bins, spec.imag, left=0, right=0)
+        # Edge-value extrapolation (no left=0/right=0 zeroing)
+        spec_real = np.interp(old_bins, new_bins, spec.real)
+        spec_imag = np.interp(old_bins, new_bins, spec.imag)
         smeared = np.fft.irfft(spec_real + 1j * spec_imag)[:n].astype(np.float32)
 
         if len(smeared) < n:
@@ -508,7 +527,11 @@ class VoiceDisguise(IAudioEffect):
 
         # ── Combine ──────────────────────────────────────────────────────
         out = smeared + noise_filt.astype(np.float32)
-        out = np.clip(out, -1.0, 1.0)
+
+        # ── RMS preservation ─────────────────────────────────────────────
+        out_rms = float(np.sqrt(np.mean(out ** 2))) + 1e-10
+        out *= (in_rms / out_rms)
+        out = np.clip(out, -1.0, 1.0).astype(np.float32)
 
         return self._restore(out, was_2d, channels)
 

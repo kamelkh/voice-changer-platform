@@ -29,7 +29,6 @@ a = Analysis(
     hiddenimports=[
         # sounddevice requires PortAudio DLL lookup at runtime
         "sounddevice",
-        "soundfile",
         # scipy sub-modules used by effects.py
         "scipy.signal",
         "scipy.signal.signaltools",

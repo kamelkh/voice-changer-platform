@@ -345,3 +345,4 @@
 2026-03-17 22:00:31 [INFO] src.ui.main_window: Window close requested.
 2026-03-17 22:00:31 [INFO] src.app: [MONITOR] Monitor stopped.
 2026-03-17 22:00:31 [INFO] src.app: VoiceChangerApp shutdown complete.
+2026-03-17 23:12:30 [INFO] src.engine.effects: PitchShifter: CUDA GPU detected (NVIDIA GeForce RTX 3070) — using GPU acceleration.

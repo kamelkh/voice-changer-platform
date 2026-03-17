@@ -113,6 +113,9 @@ class AudioPipeline:
 
         result = audio_data.astype(np.float32)
 
+        # Measure input RMS before any processing
+        in_rms = float(np.sqrt(np.mean(result ** 2))) + 1e-10
+
         # AI voice conversion first
         if self._rvc_engine is not None:
             try:
@@ -126,6 +129,15 @@ class AudioPipeline:
                 result = effect.process(result, sample_rate)
             except Exception as exc:
                 logger.error("Effect %s error: %s", effect.name, exc)
+
+        # Pipeline-level RMS normalization: prevent cumulative signal loss
+        # from multiple effects.  Only scale up, never attenuate — this
+        # guards against the chain eating signal energy.
+        out_rms = float(np.sqrt(np.mean(result ** 2))) + 1e-10
+        if out_rms < in_rms * 0.5:
+            # Signal lost more than 6 dB – restore to ~90 % of input RMS
+            scale = (in_rms * 0.9) / out_rms
+            result = np.clip(result * scale, -1.0, 1.0).astype(np.float32)
 
         self._last_process_time_ms = (time.perf_counter() - t0) * 1000.0
         return result
