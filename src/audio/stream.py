@@ -12,6 +12,8 @@ import time
 from typing import Optional
 
 import numpy as np
+from scipy.signal import resample_poly
+from math import gcd
 
 from src.audio.capture import AudioCapture
 from src.audio.output import AudioOutput
@@ -54,21 +56,30 @@ class AudioStream:
         channels: int = DEFAULT_CHANNELS,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         buffer_size: int = DEFAULT_BUFFER_SIZE,
+        input_sample_rate: Optional[int] = None,
+        output_sample_rate: Optional[int] = None,
     ) -> None:
-        self.sample_rate = sample_rate
+        self.input_sample_rate  = input_sample_rate  or sample_rate
+        self.output_sample_rate = output_sample_rate or sample_rate
+        self.sample_rate = self.input_sample_rate   # kept for back-compat
         self.channels = channels
         self.chunk_size = chunk_size
 
+        # Pre-compute resample ratio (GCD-reduced)
+        _g = gcd(self.output_sample_rate, self.input_sample_rate)
+        self._rs_up   = self.output_sample_rate // _g
+        self._rs_down = self.input_sample_rate  // _g
+
         self._capture = AudioCapture(
             device_index=input_device,
-            sample_rate=sample_rate,
+            sample_rate=self.input_sample_rate,
             channels=channels,
             chunk_size=chunk_size,
             buffer_size=buffer_size,
         )
         self._output = AudioOutput(
             device_index=output_device,
-            sample_rate=sample_rate,
+            sample_rate=self.output_sample_rate,
             channels=channels,
             chunk_size=chunk_size,
             buffer_size=buffer_size,
@@ -104,6 +115,7 @@ class AudioStream:
 
     def set_input_device(self, device_index: Optional[int]) -> None:
         """Change the input device.  Restarts the stream if running."""
+        logger.info("[STREAM] set_input_device → %s (running=%s)", device_index, self._running)
         was_running = self._running
         if was_running:
             self.stop()
@@ -225,6 +237,18 @@ class AudioStream:
             except queue.Empty:
                 pass
 
+    def _write_resampled(self, audio: np.ndarray) -> None:
+        """Resample *audio* and split into output-chunk-sized pieces."""
+        resampled = self._maybe_resample(audio)
+        out_cs = self._output.chunk_size
+        n_frames = resampled.shape[0] if resampled.ndim > 1 else len(resampled)
+        if n_frames <= out_cs:
+            self._output.write(resampled)
+        else:
+            for i in range(0, n_frames, out_cs):
+                piece = resampled[i : i + out_cs]
+                self._output.write(piece)
+
     def _processing_loop(self) -> None:
         """Dedicated thread: dequeue → process → write to output."""
         while self._running:
@@ -239,17 +263,43 @@ class AudioStream:
             t_start = time.perf_counter()
 
             if self._paused:
-                self._output.write(np.zeros_like(chunk))
+                silence = np.zeros_like(chunk)
+                self._write_resampled(silence)
             elif self._processor is not None:
                 try:
-                    processed = self._processor(chunk, self.sample_rate)
+                    processed = self._processor(chunk, self.input_sample_rate)
                 except Exception as exc:
                     logger.error("Processor error: %s", exc)
                     processed = chunk
-                self._output.write(processed)
+                self._write_resampled(processed)
             else:
-                self._output.write(chunk)
+                self._write_resampled(chunk)
 
             elapsed_ms = (time.perf_counter() - t_start) * 1000.0
             self._latency_ms = 0.9 * self._latency_ms + 0.1 * elapsed_ms
             self._chunk_count += 1
+
+            # Diagnostic: log every 200 chunks (~3 sec at 256/16kHz)
+            if self._chunk_count % 200 == 1:
+                rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                logger.info(
+                    "[STREAM] chunk #%d  in_rms=%.6f  latency=%.1fms  q=%d",
+                    self._chunk_count, rms, self._latency_ms,
+                    self._proc_queue.qsize(),
+                )
+
+    def _maybe_resample(self, audio: np.ndarray) -> np.ndarray:
+        """Resample audio if input/output sample rates differ."""
+        if self._rs_up == self._rs_down:
+            return audio
+        mono = audio.ndim == 1
+        if mono:
+            audio = audio.reshape(-1, 1)
+        channels = audio.shape[1]
+        out_cols = []
+        for ch in range(channels):
+            col = resample_poly(audio[:, ch].astype(np.float32),
+                                self._rs_up, self._rs_down)
+            out_cols.append(col)
+        result = np.stack(out_cols, axis=1).astype(np.float32)
+        return result[:, 0] if mono else result

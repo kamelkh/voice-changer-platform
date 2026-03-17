@@ -173,19 +173,38 @@ class AudioDeviceManager:
         """
         Auto-detect the VB-Audio Virtual Cable output device.
 
-        Searches the full device list (all host APIs) so CABLE Input is
-        found even when WASAPI filtering is active.
+        Prefers the WASAPI variant with ≤ 2 output channels so we
+        don't accidentally select a 16-channel virtual device.
         """
-        # Search ALL devices (not just WASAPI-filtered) for reliability
-        for dev in self._devices:
-            if VBCABLE_INPUT_NAME.lower() in dev.name.lower() and dev.is_output:
-                logger.info("VB-Cable detected: %s", dev.name)
-                return dev
+        wasapi_idx = self._wasapi_api_index()
+        all_names = [VBCABLE_INPUT_NAME.lower()] + [n.lower() for n in VBCABLE_ALT_NAMES]
 
-        for alt_name in VBCABLE_ALT_NAMES:
+        # 1st pass: WASAPI + ≤ 2 channels (ideal)
+        for name_lower in all_names:
             for dev in self._devices:
-                if alt_name.lower() in dev.name.lower() and dev.is_output:
-                    logger.info("VB-Cable detected (alt name): %s", dev.name)
+                if (name_lower in dev.name.lower()
+                        and dev.is_output
+                        and wasapi_idx is not None
+                        and dev.host_api == wasapi_idx
+                        and dev.max_output_channels <= 2):
+                    logger.info("VB-Cable detected (WASAPI): %s", dev.name)
+                    return dev
+
+        # 2nd pass: WASAPI, any channel count
+        for name_lower in all_names:
+            for dev in self._devices:
+                if (name_lower in dev.name.lower()
+                        and dev.is_output
+                        and wasapi_idx is not None
+                        and dev.host_api == wasapi_idx):
+                    logger.info("VB-Cable detected (WASAPI): %s", dev.name)
+                    return dev
+
+        # 3rd pass: any host API
+        for name_lower in all_names:
+            for dev in self._devices:
+                if name_lower in dev.name.lower() and dev.is_output:
+                    logger.info("VB-Cable detected: %s", dev.name)
                     return dev
 
         logger.warning(

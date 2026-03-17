@@ -187,29 +187,57 @@ class VoiceChangerApp:
         output_idx = self._pending_output_idx if self._pending_output_idx is not None \
             else self._resolve_device("output", prefer_vbcable=True)
 
-        for sr in [DEFAULT_SAMPLE_RATE, 44100, 16000, 8000]:
+        in_dev  = self.device_manager.find_device_by_index(input_idx)  if input_idx  is not None else None
+        out_dev = self.device_manager.find_device_by_index(output_idx) if output_idx is not None else None
+        logger.info("[START] input  device : %s", in_dev)
+        logger.info("[START] output device : %s", out_dev)
+
+        # Native sample rates reported by each device
+        in_native  = int(in_dev.default_sample_rate)  if in_dev  else DEFAULT_SAMPLE_RATE
+        out_native = int(out_dev.default_sample_rate) if out_dev else DEFAULT_SAMPLE_RATE
+        logger.info("[START] native rates — input: %d Hz  output: %d Hz", in_native, out_native)
+
+        # Candidate pairs (input_sr, output_sr) to try.
+        # First: each device at its own native rate (with resampling between them).
+        # Then: common rates as fallback.
+        candidates = [
+            (in_native,         out_native),
+            (in_native,         DEFAULT_SAMPLE_RATE),
+            (DEFAULT_SAMPLE_RATE, DEFAULT_SAMPLE_RATE),
+            (44100,             44100),
+            (16000,             16000),
+        ]
+        # Remove duplicates while keeping order
+        seen_pairs: list[tuple[int,int]] = []
+        for pair in candidates:
+            if pair not in seen_pairs:
+                seen_pairs.append(pair)
+
+        for in_sr, out_sr in seen_pairs:
+            logger.info("[START] trying input=%d Hz  output=%d Hz …", in_sr, out_sr)
             try:
                 self.stream = AudioStream(
                     input_device=input_idx,
                     output_device=output_idx,
-                    sample_rate=sr,
+                    sample_rate=out_sr,
                     channels=channels,
                     chunk_size=chunk_size,
                     buffer_size=buffer_size,
+                    input_sample_rate=in_sr,
+                    output_sample_rate=out_sr,
                 )
                 self.stream.set_processor(self.pipeline.process)
                 self.stream.start()
-                logger.info("Audio stream started at %d Hz (input=%s output=%s).",
-                            sr, input_idx, output_idx)
+                logger.info("[START] SUCCESS  input=%d Hz  output=%d Hz", in_sr, out_sr)
                 return True
             except Exception as exc:
-                logger.warning("Sample rate %d Hz failed: %s — trying next…", sr, exc)
+                logger.error("[START] FAILED input=%d output=%d: %s", in_sr, out_sr, exc)
                 try:
                     self.stream.stop()
                 except Exception:
                     pass
 
-        logger.error("All sample rates failed — stream could not start.")
+        logger.error("[START] ALL combinations failed — cannot start stream.")
         return False
 
     def stop(self) -> None:
@@ -230,14 +258,16 @@ class VoiceChangerApp:
 
     def set_input_device(self, device_index: Optional[int]) -> None:
         """Switch the input device (stores selection even before stream starts)."""
+        logger.info("[DEVICE] set_input_device → index=%s", device_index)
         self._pending_input_idx = device_index
-        if self.stream:
+        if self.stream and self.stream.is_running:
             self.stream.set_input_device(device_index)
 
     def set_output_device(self, device_index: Optional[int]) -> None:
         """Switch the output device (stores selection even before stream starts)."""
+        logger.info("[DEVICE] set_output_device → index=%s", device_index)
         self._pending_output_idx = device_index
-        if self.stream:
+        if self.stream and self.stream.is_running:
             self.stream.set_output_device(device_index)
 
     # ── Profile management ────────────────────────────────────────────────────

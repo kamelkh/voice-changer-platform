@@ -109,6 +109,9 @@ class AudioCapture:
             logger.warning("AudioCapture already running.")
             return
 
+        logger.debug("[CAPTURE] opening InputStream: device=%s sr=%s ch=%s chunk=%s dtype=%s",
+                     self.device_index, self.sample_rate, self.channels,
+                     self.chunk_size, self.dtype)
         try:
             self._stream = sd.InputStream(
                 device=self.device_index,
