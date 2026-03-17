@@ -13,6 +13,7 @@ import numpy as np
 
 from src.engine.effects import (
     IAudioEffect,
+    Compressor,
     NoiseGate,
     PitchShifter,
     FormantShifter,
@@ -42,6 +43,11 @@ class AudioPipeline:
         self._rvc_engine: Optional[object] = None  # RVCEngine instance
         self._bypass: bool = False
         self._last_process_time_ms: float = 0.0
+
+        # Input gain boost — compensates for quiet microphones (e.g. Galaxy
+        # Buds Bluetooth at 16 kHz typically deliver RMS ~0.002 while normal
+        # speech needs ~0.05).  Set via settings["processing"]["input_gain"].
+        self.input_gain: float = 8.0  # +18 dB default
 
     # ── Effect management ─────────────────────────────────────────────────────
 
@@ -113,7 +119,13 @@ class AudioPipeline:
 
         result = audio_data.astype(np.float32)
 
-        # Measure input RMS before any processing
+        # ── Input gain boost ───────────────────────────────────────────
+        # Galaxy Buds / Bluetooth mics are extremely quiet.  We amplify
+        # early so every downstream effect gets a usable signal level.
+        if self.input_gain != 1.0:
+            result = np.clip(result * self.input_gain, -1.0, 1.0).astype(np.float32)
+
+        # Measure input RMS *after* gain boost (this is the effective input)
         in_rms = float(np.sqrt(np.mean(result ** 2))) + 1e-10
 
         # AI voice conversion first
@@ -172,6 +184,15 @@ class AudioPipeline:
 
         if profile.reverb_level > 0.0:
             self.add_effect(ReverbEffect(wet_level=profile.reverb_level))
+
+        # Always add a compressor to even out volume and boost weak signals
+        self.add_effect(Compressor(
+            threshold_db=-25.0,
+            ratio=3.0,
+            attack_ms=5.0,
+            release_ms=100.0,
+            makeup_gain_db=8.0,   # +8 dB makeup to compensate quiet input
+        ))
 
         if profile.gain != 1.0:
             self.add_effect(VolumeControl(gain=profile.gain))

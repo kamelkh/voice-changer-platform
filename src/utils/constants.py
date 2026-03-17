@@ -31,11 +31,12 @@ DEFAULT_BUFFER_SIZE: int = 4096
 DEFAULT_DTYPE: str = "float32"
 
 # ── Low-latency presets ───────────────────────────────────────────────────────
+# Minimum 512 frames: FFT-based effects (PitchShifter, FormantShifter,
+# VoiceDisguise) need ≥512 samples to avoid spectral artefacts.
 LATENCY_PRESETS: dict = {
-    "ultra": {"chunk_size": 128,  "buffer_size": 512,  "label": "Ultra  (~3 ms)"},
-    "low":   {"chunk_size": 256,  "buffer_size": 1024, "label": "Low    (~6 ms)"},
-    "medium":{"chunk_size": 512,  "buffer_size": 2048, "label": "Medium (~11 ms)"},
-    "safe":  {"chunk_size": 1024, "buffer_size": 4096, "label": "Safe   (~23 ms)"},
+    "low":     {"chunk_size": 512,  "buffer_size": 2048, "label": "Low    (~32 ms)"},
+    "balanced":{"chunk_size": 1024, "buffer_size": 4096, "label": "Balanced (~64 ms)"},
+    "safe":    {"chunk_size": 2048, "buffer_size": 8192, "label": "Safe   (~128 ms)"},
 }
 
 # ── VB-Audio Virtual Cable ────────────────────────────────────────────────────

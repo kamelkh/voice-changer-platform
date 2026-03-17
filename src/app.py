@@ -9,7 +9,6 @@ Owns all subsystems and wires them together:
 from __future__ import annotations
 
 import json
-import queue
 import threading
 from math import gcd
 from pathlib import Path
@@ -70,6 +69,10 @@ class VoiceChangerApp:
         self.model_manager = ModelManager()
         self.pipeline = AudioPipeline()
 
+        # Apply input gain from settings
+        input_gain = self._get("processing", "input_gain", default=8.0)
+        self.pipeline.input_gain = float(input_gain)
+
         self._rvc_engine: Optional[RVCEngine] = None
 
         self.stream: Optional[AudioStream] = None
@@ -78,11 +81,17 @@ class VoiceChangerApp:
         self._pending_input_idx: Optional[int] = None
         self._pending_output_idx: Optional[int] = None
 
-        # Monitor (hear your own processed voice through headphones)
+        # Monitor (record-then-playback: speak → stop → hear result)
         self._monitor_enabled: bool = False
-        self._monitor_stream: Optional[sd.OutputStream] = None
-        self._monitor_queue: queue.Queue = queue.Queue(maxsize=64)
         self._monitor_sr: int = DEFAULT_SAMPLE_RATE
+        self._monitor_device_idx: Optional[int] = None
+        self._monitor_buffer: list = []          # accumulated audio chunks
+        self._monitor_state: str = "idle"        # idle | recording | playing
+        self._monitor_has_speech: bool = False
+        self._monitor_silence_chunks: int = 0
+        self._MONITOR_SPEECH_THRESH: float = 0.008   # RMS above = speech
+        self._MONITOR_SILENCE_THRESH: float = 0.004  # RMS below = silence
+        self._MONITOR_SILENCE_SEC: float = 1.2       # seconds of silence → playback
 
         # Load profiles
         self.profile_manager.load_all()
@@ -287,11 +296,16 @@ class VoiceChangerApp:
         if self.stream and self.stream.is_running:
             self.stream.set_output_device(device_index)
 
-    # ── Monitor (live preview through headphones) ─────────────────────────────
+    # ── Monitor (record-then-playback through headphones) ────────────────────
 
     @property
     def monitor_enabled(self) -> bool:
         return self._monitor_enabled
+
+    @property
+    def monitor_state(self) -> str:
+        """Return current monitor state: 'idle', 'recording', or 'playing'."""
+        return self._monitor_state
 
     def toggle_monitor(self) -> bool:
         """Toggle voice monitoring on/off.  Returns new state."""
@@ -302,54 +316,44 @@ class VoiceChangerApp:
         return self._monitor_enabled
 
     def _start_monitor(self) -> None:
-        """Open a second output stream to the system default output device."""
+        """Enable record-then-playback monitoring through headphones."""
         try:
-            # Find a real output device (NOT VB-Cable) for monitoring
             monitor_idx = self._find_monitor_device()
             dev_info = sd.query_devices(monitor_idx)
             sr = int(dev_info['default_samplerate'])
-            logger.info("[MONITOR] Starting monitor on device [%d] %s @ %d Hz",
+            logger.info("[MONITOR] Starting record-playback monitor on device [%d] %s @ %d Hz",
                         monitor_idx, dev_info['name'], sr)
 
             self._monitor_sr = sr
-            # Drain any stale data
-            while not self._monitor_queue.empty():
-                try:
-                    self._monitor_queue.get_nowait()
-                except queue.Empty:
-                    break
+            self._monitor_device_idx = monitor_idx
+            self._monitor_buffer = []
+            self._monitor_state = "idle"
+            self._monitor_has_speech = False
+            self._monitor_silence_chunks = 0
 
-            self._monitor_stream = sd.OutputStream(
-                device=monitor_idx,
-                samplerate=sr,
-                channels=1,
-                dtype='float32',
-                blocksize=1024,
-                callback=self._monitor_callback_sd,
-            )
-            self._monitor_stream.start()
-
-            # Hook into the audio stream
+            # Hook into the audio stream to receive processed audio
             if self.stream:
                 self.stream.set_monitor_callback(self._on_monitor_audio)
 
             self._monitor_enabled = True
-            logger.info("[MONITOR] Monitor started.")
+            logger.info("[MONITOR] Monitor started (record-then-playback mode).")
         except Exception as exc:
             logger.error("[MONITOR] Failed to start: %s", exc)
             self._monitor_enabled = False
 
     def _stop_monitor(self) -> None:
-        """Close the monitor output stream."""
+        """Disable monitoring and clean up."""
         if self.stream:
             self.stream.set_monitor_callback(None)
-        if self._monitor_stream is not None:
-            try:
-                self._monitor_stream.stop()
-                self._monitor_stream.close()
-            except Exception:
-                pass
-            self._monitor_stream = None
+        # Stop any ongoing playback
+        try:
+            sd.stop()
+        except Exception:
+            pass
+        self._monitor_state = "idle"
+        self._monitor_buffer.clear()
+        self._monitor_has_speech = False
+        self._monitor_silence_chunks = 0
         self._monitor_enabled = False
         logger.info("[MONITOR] Monitor stopped.")
 
@@ -399,8 +403,14 @@ class VoiceChangerApp:
         return sd.default.device[1]
 
     def _on_monitor_audio(self, audio: np.ndarray) -> None:
-        """Called from the processing thread with resampled audio at output_sample_rate."""
-        # The audio is at output_sample_rate; resample to monitor_sr if needed
+        """Called from the processing thread with resampled audio.
+
+        Accumulates audio while speaking, triggers playback after silence.
+        """
+        if self._monitor_state == "playing":
+            return  # Don't record while playing back
+
+        # Resample to monitor sample rate if needed
         out_sr = self.stream.output_sample_rate if self.stream else DEFAULT_SAMPLE_RATE
         if out_sr != self._monitor_sr:
             g = gcd(self._monitor_sr, out_sr)
@@ -408,31 +418,65 @@ class VoiceChangerApp:
             down = out_sr // g
             audio = resample_poly(audio.astype(np.float32), up, down).astype(np.float32)
 
-        try:
-            self._monitor_queue.put_nowait(audio)
-        except queue.Full:
-            try:
-                self._monitor_queue.get_nowait()
-                self._monitor_queue.put_nowait(audio)
-            except queue.Empty:
-                pass
+        rms = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
 
-    def _monitor_callback_sd(self, outdata: np.ndarray, frames: int,
-                              time_info, status) -> None:
-        """sounddevice callback — fills the monitor output buffer from the queue."""
-        filled = 0
-        while filled < frames:
-            try:
-                chunk = self._monitor_queue.get_nowait()
-            except queue.Empty:
-                break
-            chunk = chunk.ravel()
-            remain = frames - filled
-            use = min(len(chunk), remain)
-            outdata[filled:filled + use, 0] = chunk[:use]
-            filled += use
-        if filled < frames:
-            outdata[filled:, :] = 0.0
+        if rms > self._MONITOR_SPEECH_THRESH:
+            # Speech detected — record it
+            self._monitor_has_speech = True
+            self._monitor_silence_chunks = 0
+            self._monitor_buffer.append(audio.copy())
+            self._monitor_state = "recording"
+        elif self._monitor_has_speech:
+            # Brief silence during/after speech — keep recording
+            self._monitor_buffer.append(audio.copy())
+            self._monitor_silence_chunks += 1
+
+            # How many chunks = silence duration?
+            chunk_dur = len(audio) / self._monitor_sr if self._monitor_sr > 0 else 0.02
+            needed = int(self._MONITOR_SILENCE_SEC / chunk_dur) if chunk_dur > 0 else 50
+
+            if self._monitor_silence_chunks >= needed:
+                # Speech ended — trigger playback
+                self._trigger_monitor_playback()
+
+    def _trigger_monitor_playback(self) -> None:
+        """Concatenate recorded buffer and play through headphones."""
+        if not self._monitor_buffer:
+            self._monitor_state = "idle"
+            return
+
+        self._monitor_state = "playing"
+        full_audio = np.concatenate(self._monitor_buffer).astype(np.float32)
+
+        # Trim trailing silence (remove the silence-detection tail)
+        trim_samples = int(self._MONITOR_SILENCE_SEC * self._monitor_sr * 0.6)
+        if len(full_audio) > trim_samples:
+            full_audio = full_audio[:-trim_samples]
+
+        logger.info("[MONITOR] Playing back %.2f sec of recorded audio",
+                    len(full_audio) / self._monitor_sr)
+
+        # Play in a background thread so we don't block the processing loop
+        threading.Thread(
+            target=self._play_monitor_buffer,
+            args=(full_audio.copy(),),
+            daemon=True,
+            name="MonitorPlayback",
+        ).start()
+
+    def _play_monitor_buffer(self, audio: np.ndarray) -> None:
+        """Play the recorded buffer through the monitor device (blocking)."""
+        try:
+            sd.play(audio, samplerate=self._monitor_sr,
+                    device=self._monitor_device_idx, blocking=True)
+        except Exception as exc:
+            logger.error("[MONITOR] Playback error: %s", exc)
+        finally:
+            self._monitor_buffer.clear()
+            self._monitor_has_speech = False
+            self._monitor_silence_chunks = 0
+            self._monitor_state = "idle"
+            logger.info("[MONITOR] Playback finished — ready for next recording.")
 
     # ── Profile management ────────────────────────────────────────────────────
 
@@ -527,18 +571,29 @@ class VoiceChangerApp:
         )
 
         mapping = {
-            "pitch_shift": (PitchShifter, "semitones"),
+            "input_gain":    None,  # handled separately below
+            "pitch_shift":   (PitchShifter, "semitones"),
             "formant_shift": (FormantShifter, "semitones"),
-            "reverb_level": (ReverbEffect, "wet_level"),
-            "noise_gate": (NoiseGate, "threshold_db"),
-            "gain": (VolumeControl, "gain"),
-            "voice_disguise": (VoiceDisguise, "intensity"),
+            "reverb_level":  (ReverbEffect, "wet_level"),
+            "noise_gate":    (NoiseGate, "threshold_db"),
+            "gain":          (VolumeControl, "gain"),
+            "voice_disguise":(VoiceDisguise, "intensity"),
         }
 
         if param_name not in mapping:
             return
 
-        effect_type, key = mapping[param_name]
+        # Special case: input_gain is a pipeline-level param, not an effect
+        if param_name == "input_gain":
+            self.pipeline.input_gain = float(value)
+            logger.debug("Pipeline input_gain = %.1f", value)
+            return
+
+        entry = mapping[param_name]
+        if entry is None:
+            return
+
+        effect_type, key = entry
         effect = self.pipeline.get_effect_by_type(effect_type)
         if effect is not None:
             effect.set_params({key: value})

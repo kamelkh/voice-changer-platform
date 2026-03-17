@@ -189,7 +189,7 @@ class MainWindow:
             font=("Segoe UI", 8),
         ).pack(side=tk.LEFT, padx=(0, 6))
 
-        self._preset_var = tk.StringVar(value="low")
+        self._preset_var = tk.StringVar(value="balanced")
         preset_cb = ttk.Combobox(
             preset_frame,
             textvariable=self._preset_var,
@@ -233,6 +233,25 @@ class MainWindow:
             else:
                 self._status_bar.update_input_level(0)
                 self._status_bar.update_output_level(0)
+
+            # Update monitor button to reflect current state
+            if self._app.monitor_enabled:
+                state = self._app.monitor_state
+                if state == "recording":
+                    self._monitor_btn.config(
+                        text="🔴  Recording...",
+                        bg="#dc2626", fg="white",
+                    )
+                elif state == "playing":
+                    self._monitor_btn.config(
+                        text="🔊  Playing...",
+                        bg="#16a34a", fg="white",
+                    )
+                else:
+                    self._monitor_btn.config(
+                        text="🎧  Monitor ON — Speak!",
+                        bg="#7c3aed", fg="white",
+                    )
         except Exception as exc:
             logger.debug("UI update error: %s", exc)
         finally:
@@ -267,16 +286,16 @@ class MainWindow:
             self._status_bar.set_message("Voice changer stopped")
 
     def _toggle_monitor(self) -> None:
-        """Toggle voice monitoring (hear your own processed voice through headphones)."""
+        """Toggle voice monitoring (record-then-playback through headphones)."""
         enabled = self._app.toggle_monitor()
         if enabled:
             self._monitor_btn.config(
-                text="🎧  Monitor ON",
+                text="🎧  Monitor ON — Speak!",
                 bg="#7c3aed",
                 fg="white",
                 activebackground="#6d28d9",
             )
-            self._status_bar.set_message("🎧 Monitor ON — hearing your processed voice")
+            self._status_bar.set_message("🎧 Monitor ON — speak, then wait to hear playback")
         else:
             self._monitor_btn.config(
                 text="🎧  Monitor OFF",
