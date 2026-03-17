@@ -55,9 +55,25 @@ def main() -> int:
         print("\nInterrupted by user.")
         return 0
     except Exception as exc:  # noqa: BLE001
+        import traceback  # noqa: PLC0415
         from src.utils.logger import get_logger  # noqa: PLC0415
         logger = get_logger(__name__)
         logger.exception("Unhandled exception in main: %s", exc)
+        # Show a visible error dialog so the window doesn't just vanish
+        try:
+            import tkinter as tk  # noqa: PLC0415
+            from tkinter import messagebox  # noqa: PLC0415
+            _root = tk.Tk()
+            _root.withdraw()
+            messagebox.showerror(
+                "Voice Changer – Unexpected Error",
+                f"The application crashed:\n\n{type(exc).__name__}: {exc}\n\n"
+                f"Full details are in the logs/ folder.\n\n"
+                f"{traceback.format_exc()[-800:]}",
+            )
+            _root.destroy()
+        except Exception:
+            pass
         return 1
 
 

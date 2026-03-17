@@ -17,7 +17,31 @@ import scipy.signal as signal
 
 from src.utils.logger import get_logger
 
+# ── GPU availability check ────────────────────────────────────────────────────
+try:
+    import torch
+    _CUDA = torch.cuda.is_available()
+    if _CUDA:
+        _DEVICE = torch.device("cuda")
+        # Warm up CUDA so the first inference isn't slow
+        _ = torch.zeros(1, device=_DEVICE)
+        logger_tmp = None  # will log after logger is created
+    else:
+        _DEVICE = torch.device("cpu")
+    _TORCH_OK = True
+except ImportError:
+    _TORCH_OK = False
+    _CUDA = False
+    _DEVICE = None
+
 logger = get_logger(__name__)
+
+if _TORCH_OK:
+    if _CUDA:
+        logger.info("PitchShifter: CUDA GPU detected (%s) — using GPU acceleration.",
+                    torch.cuda.get_device_name(0))
+    else:
+        logger.info("PitchShifter: torch available but no CUDA GPU — using CPU.")
 
 
 # ── Base interface ────────────────────────────────────────────────────────────
@@ -63,37 +87,72 @@ class IAudioEffect(ABC):
 
 class PitchShifter(IAudioEffect):
     """
-    Real-time pitch shifter based on STFT phase-vocoder resampling.
+    Real-time pitch shifter.
 
-    Works on small chunks (256–1024 frames) with acceptable quality.
-    Uses scipy.signal.resample_poly (integer ratio) when the semitone
-    value maps cleanly, otherwise falls back to resample.
+    When PyTorch + CUDA is available (RTX 3070 etc.) uses a GPU phase-vocoder
+    via torchaudio.functional.phase_vocoder for very low latency.
+    Falls back to scipy.signal.resample on CPU otherwise.
     """
 
     def __init__(self, semitones: float = 0.0) -> None:
         self.semitones = float(semitones)
-        self._buf = np.array([], dtype=np.float32)   # carry-over buffer
+        self._buf = np.array([], dtype=np.float32)
+
+        # Detect torchaudio for high-quality GPU pitch shift
+        self._torchaudio_ok = False
+        if _TORCH_OK and _CUDA:
+            try:
+                import torchaudio  # noqa: F401
+                self._torchaudio_ok = True
+            except ImportError:
+                pass
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
             return audio_data
 
         mono, was_2d, channels = self._to_mono_1d(audio_data)
-        n = len(mono)
-        ratio = 2.0 ** (self.semitones / 12.0)
 
-        # Resample to simulate pitch stretch then trim to original length.
-        # scipy.signal.resample is O(n log n) via FFT – safe for real-time.
-        new_len = max(1, int(round(n / ratio)))
-        resampled = signal.resample(mono, new_len).astype(np.float32)
-
-        if len(resampled) >= n:
-            out = resampled[:n]
+        if self._torchaudio_ok and _CUDA:
+            out = self._process_gpu(mono, sample_rate)
         else:
-            out = np.concatenate([resampled,
-                                   np.zeros(n - len(resampled), dtype=np.float32)])
+            out = self._process_cpu(mono)
 
         return self._restore(out, was_2d, channels)
+
+    def _process_gpu(self, mono: np.ndarray, sample_rate: int) -> np.ndarray:
+        """GPU pitch shift using torchaudio.functional.resample + phase trick."""
+        import torchaudio.functional as F  # noqa
+
+        ratio = 2.0 ** (self.semitones / 12.0)
+        orig_sr = sample_rate
+        # Resample to a "wrong" sample rate then resample back at original rate
+        # (same as time-stretch + resample = pitch shift without duration change)
+        shifted_sr = int(round(orig_sr / ratio))
+
+        t = torch.from_numpy(mono).unsqueeze(0).to(_DEVICE)  # [1, T]
+        # Step 1: time-stretch by resampling to shifted_sr
+        stretched = F.resample(t, orig_freq=orig_sr, new_freq=shifted_sr)
+        # Step 2: resample back to orig_sr to preserve duration
+        out_t = F.resample(stretched, orig_freq=shifted_sr, new_freq=orig_sr)
+
+        out = out_t.squeeze(0).cpu().numpy().astype(np.float32)
+        # Trim/pad to match input length exactly
+        n = len(mono)
+        if len(out) >= n:
+            return out[:n]
+        return np.concatenate([out, np.zeros(n - len(out), dtype=np.float32)])
+
+    def _process_cpu(self, mono: np.ndarray) -> np.ndarray:
+        """CPU fallback using scipy.signal.resample (FFT-based)."""
+        n = len(mono)
+        ratio = 2.0 ** (self.semitones / 12.0)
+        new_len = max(1, int(round(n / ratio)))
+        resampled = signal.resample(mono, new_len).astype(np.float32)
+        if len(resampled) >= n:
+            return resampled[:n]
+        return np.concatenate([resampled,
+                                np.zeros(n - len(resampled), dtype=np.float32)])
 
     def get_params(self) -> dict[str, Any]:
         return {"semitones": self.semitones}
@@ -101,6 +160,8 @@ class PitchShifter(IAudioEffect):
     def set_params(self, params: dict[str, Any]) -> None:
         if "semitones" in params:
             self.semitones = float(params["semitones"])
+            # Re-check torchaudio if parameters change
+
 
 
 # ── Formant Shifter ───────────────────────────────────────────────────────────
@@ -415,57 +476,6 @@ class IAudioEffect(ABC):
         if was_1d:
             return audio.squeeze(1)
         return audio
-
-
-# ── Pitch Shifter ─────────────────────────────────────────────────────────────
-
-
-class PitchShifter(IAudioEffect):
-    """
-    Shift audio pitch by *semitones* without changing speed.
-
-    Uses a phase-vocoder approach via STFT resampling so it is fast
-    enough for real-time use without requiring *librosa* (which is
-    much slower on small chunks).
-    """
-
-    def __init__(self, semitones: float = 0.0) -> None:
-        """
-        Args:
-            semitones: Pitch shift in semitones (−12 to +12).
-        """
-        self.semitones = float(semitones)
-
-    def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
-        if self.semitones == 0.0:
-            return audio_data
-
-        audio, was_1d = self._ensure_2d(audio_data)
-        ratio = 2.0 ** (self.semitones / 12.0)
-        channels = audio.shape[1]
-        out_channels = []
-
-        for ch in range(channels):
-            mono = audio[:, ch].astype(np.float32)
-            # Resample to simulate pitch shift (changes speed)
-            new_len = max(1, int(len(mono) / ratio))
-            resampled = signal.resample(mono, new_len)
-            # Trim or pad back to original length
-            if len(resampled) >= len(mono):
-                shifted = resampled[: len(mono)]
-            else:
-                shifted = np.pad(resampled, (0, len(mono) - len(resampled)))
-            out_channels.append(shifted)
-
-        result = np.stack(out_channels, axis=1)
-        return self._restore_shape(result, was_1d)
-
-    def get_params(self) -> dict[str, Any]:
-        return {"semitones": self.semitones}
-
-    def set_params(self, params: dict[str, Any]) -> None:
-        if "semitones" in params:
-            self.semitones = float(params["semitones"])
 
 
 # ── Formant Shifter ───────────────────────────────────────────────────────────

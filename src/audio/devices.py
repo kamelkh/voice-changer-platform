@@ -76,13 +76,67 @@ class AudioDeviceManager:
         except Exception as exc:
             logger.error("Failed to query audio devices: %s", exc)
 
+    # ── Host-API helpers ──────────────────────────────────────────────────────
+
+    def _wasapi_api_index(self) -> int | None:
+        """Return the PortAudio host-API index for WASAPI, or None."""
+        try:
+            for i, api in enumerate(sd.query_hostapis()):
+                if "wasapi" in api["name"].lower():
+                    return i
+        except Exception:
+            pass
+        return None
+
+    def _best_devices(self) -> list[AudioDevice]:
+        """Return WASAPI-only devices when available, else all devices."""
+        wasapi_idx = self._wasapi_api_index()
+        if wasapi_idx is not None:
+            wasapi = [d for d in self._devices if d.host_api == wasapi_idx]
+            if wasapi:
+                return wasapi
+        return self._devices
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
     def get_input_devices(self) -> list[AudioDevice]:
-        """Return all devices that have at least one input channel."""
-        return [d for d in self._devices if d.is_input]
+        """
+        Return microphone / capture devices.
+
+        Uses WASAPI on Windows so each device appears only once and
+        pure playback devices are excluded from the list.
+        """
+        devs = self._best_devices()
+        # Prefer pure-input devices (no output channels), but keep
+        # full-duplex ones too (e.g. Bluetooth headsets).
+        pure   = [d for d in devs if d.max_input_channels > 0 and d.max_output_channels == 0]
+        duplex = [d for d in devs if d.max_input_channels > 0 and d.max_output_channels > 0]
+        return pure + duplex
 
     def get_output_devices(self) -> list[AudioDevice]:
-        """Return all devices that have at least one output channel."""
-        return [d for d in self._devices if d.is_output]
+        """
+        Return speaker / virtual cable playback devices.
+
+        Uses WASAPI on Windows so microphones do *not* appear here.
+        VB-Audio CABLE Input is always included when present.
+        """
+        devs = self._best_devices()
+        # Pure output only (no input channels) – this is what we want
+        # to show in the Output dropdown (speakers, VB-Cable, etc.).
+        pure   = [d for d in devs if d.max_output_channels > 0 and d.max_input_channels == 0]
+        # Also include full-duplex devices whose name hints at a virtual cable
+        # or audio interface (we still want CABLE Input here).
+        cable_names = (VBCABLE_INPUT_NAME.lower(),) + tuple(n.lower() for n in VBCABLE_ALT_NAMES)
+        duplex_output = [
+            d for d in devs
+            if d.max_output_channels > 0 and d.max_input_channels > 0
+            and any(n in d.name.lower() for n in cable_names)
+        ]
+        seen = {d.index for d in pure}
+        for d in duplex_output:
+            if d.index not in seen:
+                pure.append(d)
+        return pure
 
     def get_all_devices(self) -> list[AudioDevice]:
         """Return the full device list."""
@@ -119,24 +173,20 @@ class AudioDeviceManager:
         """
         Auto-detect the VB-Audio Virtual Cable output device.
 
-        The *output* here means the PortAudio output device that maps to
-        the CABLE Input (i.e., the virtual microphone's write end).
-
-        Returns:
-            Detected :class:`AudioDevice` or *None* if not installed.
+        Searches the full device list (all host APIs) so CABLE Input is
+        found even when WASAPI filtering is active.
         """
-        # Try primary name first
-        device = self.find_device_by_name(VBCABLE_INPUT_NAME)
-        if device:
-            logger.info("VB-Cable detected: %s", device.name)
-            return device
+        # Search ALL devices (not just WASAPI-filtered) for reliability
+        for dev in self._devices:
+            if VBCABLE_INPUT_NAME.lower() in dev.name.lower() and dev.is_output:
+                logger.info("VB-Cable detected: %s", dev.name)
+                return dev
 
-        # Fallback to alternative name patterns
         for alt_name in VBCABLE_ALT_NAMES:
-            device = self.find_device_by_name(alt_name)
-            if device and device.is_output:
-                logger.info("VB-Cable detected (alt name): %s", device.name)
-                return device
+            for dev in self._devices:
+                if alt_name.lower() in dev.name.lower() and dev.is_output:
+                    logger.info("VB-Cable detected (alt name): %s", dev.name)
+                    return dev
 
         logger.warning(
             "VB-Audio Virtual Cable not found. "

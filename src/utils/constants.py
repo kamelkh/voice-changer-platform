@@ -65,7 +65,7 @@ RVC_INDEX_EXTENSIONS: list[str] = [".index"]
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 APP_TITLE: str = "AI Voice Changer"
-APP_VERSION: str = "1.0.0"
+APP_VERSION: str = "2.0.0"
 DEFAULT_WINDOW_WIDTH: int = 960
 DEFAULT_WINDOW_HEIGHT: int = 700
 

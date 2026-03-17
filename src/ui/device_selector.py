@@ -212,10 +212,15 @@ class DeviceSelector(tk.Frame):
         return f"[{dev.index}] {dev.name}"
 
     def _find_by_label(self, label: str, input_only: bool) -> Optional[AudioDevice]:
+        # First search within the filtered list (preferred)
         devices = (
             self._dm.get_input_devices() if input_only else self._dm.get_output_devices()
         )
         for dev in devices:
+            if self._device_label(dev) == label:
+                return dev
+        # Fallback: search ALL devices so a valid selection is never lost
+        for dev in self._dm.get_all_devices():
             if self._device_label(dev) == label:
                 return dev
         return None

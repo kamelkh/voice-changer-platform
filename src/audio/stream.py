@@ -6,6 +6,7 @@ the full lifecycle: start, stop, pause, and monitoring.
 """
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from typing import Optional
@@ -77,6 +78,11 @@ class AudioStream:
         self._paused = False
         self._running = False
 
+        # Dedicated processing thread + input queue (decouples capture ↔ process
+        # so the PortAudio callback is never blocked by heavy DSP work)
+        self._proc_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
+        self._proc_thread: Optional[threading.Thread] = None
+
         # Latency monitoring
         self._last_chunk_time: float = 0.0
         self._latency_ms: float = 0.0
@@ -127,16 +133,29 @@ class AudioStream:
         self._capture.start()
         self._running = True
         self._paused = False
+        # Start the dedicated processing thread
+        self._proc_thread = threading.Thread(
+            target=self._processing_loop, daemon=True, name="AudioProcThread"
+        )
+        self._proc_thread.start()
         logger.info("AudioStream started.")
 
     def stop(self) -> None:
         """Stop the stream completely."""
         if not self._running:
             return
-        self._capture.stop()
-        self._output.stop()
-        self._capture.remove_callback(self._on_audio_chunk)
         self._running = False
+        self._capture.stop()
+        self._capture.remove_callback(self._on_audio_chunk)
+        # Unblock the processing thread so it can exit
+        try:
+            self._proc_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        if self._proc_thread is not None:
+            self._proc_thread.join(timeout=2.0)
+            self._proc_thread = None
+        self._output.stop()
         logger.info("AudioStream stopped.")
 
     def pause(self) -> None:
@@ -192,27 +211,45 @@ class AudioStream:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _on_audio_chunk(self, chunk: np.ndarray) -> None:
-        """Called by AudioCapture on every new chunk (background thread)."""
-        t_start = time.perf_counter()
-
-        if self._paused:
-            # Output silence
-            silence = np.zeros_like(chunk)
-            self._output.write(silence)
+        """Called by AudioCapture on every new chunk (background thread).
+        This method must return as fast as possible – it only enqueues."""
+        if not self._running:
             return
-
-        if self._processor is not None:
+        try:
+            self._proc_queue.put_nowait(chunk)
+        except queue.Full:
+            # Drop the oldest chunk to make room for the new one
             try:
-                processed = self._processor(chunk, self.sample_rate)
-            except Exception as exc:
-                logger.error("Processor error: %s", exc)
-                processed = chunk  # pass-through on error
-        else:
-            processed = chunk  # pass-through mode
+                self._proc_queue.get_nowait()
+                self._proc_queue.put_nowait(chunk)
+            except queue.Empty:
+                pass
 
-        self._output.write(processed)
+    def _processing_loop(self) -> None:
+        """Dedicated thread: dequeue → process → write to output."""
+        while self._running:
+            try:
+                chunk = self._proc_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
 
-        # Rolling latency estimate (EMA)
-        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
-        self._latency_ms = 0.9 * self._latency_ms + 0.1 * elapsed_ms
-        self._chunk_count += 1
+            if chunk is None:  # sentinel – exit signal
+                break
+
+            t_start = time.perf_counter()
+
+            if self._paused:
+                self._output.write(np.zeros_like(chunk))
+            elif self._processor is not None:
+                try:
+                    processed = self._processor(chunk, self.sample_rate)
+                except Exception as exc:
+                    logger.error("Processor error: %s", exc)
+                    processed = chunk
+                self._output.write(processed)
+            else:
+                self._output.write(chunk)
+
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            self._latency_ms = 0.9 * self._latency_ms + 0.1 * elapsed_ms
+            self._chunk_count += 1

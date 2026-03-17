@@ -1,33 +1,22 @@
-2026-03-17 20:17:46 [INFO] src.app: Initialising VoiceChangerApp…
-2026-03-17 20:17:46 [DEBUG] src.app: Settings loaded from C:\Users\User\OneDrive\מסמכים\GitHub\voice-changer-platform\config\settings.json
-2026-03-17 20:17:46 [DEBUG] src.audio.devices: Found 55 audio devices.
-2026-03-17 20:17:46 [INFO] src.engine.model_manager: Model catalog refreshed: 0 model(s) found.
-2026-03-17 20:17:46 [DEBUG] src.profiles.profile_manager: Loaded profile: custom_ai (AI Voice Clone)
-2026-03-17 20:17:46 [DEBUG] src.profiles.profile_manager: Loaded profile: deep_male (Deep Male)
-2026-03-17 20:17:46 [DEBUG] src.profiles.profile_manager: Loaded profile: female (Female)
-2026-03-17 20:17:46 [DEBUG] src.profiles.profile_manager: Loaded profile: robot (Robot)
-2026-03-17 20:17:46 [INFO] src.profiles.profile_manager: Loaded 4 profile(s).
-2026-03-17 20:17:46 [INFO] src.profiles.profile_manager: Active profile: deep_male – Deep Male
-2026-03-17 20:17:46 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
-2026-03-17 20:17:46 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
-2026-03-17 20:17:46 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
-2026-03-17 20:17:46 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
-2026-03-17 20:17:46 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Deep Male' (4 effects).
-2026-03-17 20:17:46 [INFO] src.engine.pipeline: RVC engine detached.
-2026-03-17 20:17:46 [INFO] src.audio.devices: VB-Cable detected: CABLE Input (VB-Audio Virtual C
-2026-03-17 20:17:46 [INFO] src.app: VoiceChangerApp ready.
-2026-03-17 20:17:47 [DEBUG] src.audio.devices: Found 55 audio devices.
-2026-03-17 20:17:47 [INFO] src.audio.devices: VB-Cable detected: CABLE Input (VB-Audio Virtual C
-2026-03-17 20:17:47 [ERROR] __main__: Unhandled exception in main: 'ProfileSelector' object has no attribute '_new_callbacks'
-Traceback (most recent call last):
-  File "C:\Users\User\OneDrive\מסמכים\GitHub\voice-changer-platform\src\main.py", line 51, in main
-    window = MainWindow(app)
-             ^^^^^^^^^^^^^^^
-  File "C:\Users\User\OneDrive\מסמכים\GitHub\voice-changer-platform\src\ui\main_window.py", line 65, in __init__
-    self._build_body()
-  File "C:\Users\User\OneDrive\מסמכים\GitHub\voice-changer-platform\src\ui\main_window.py", line 127, in _build_body
-    self._profile_selector.on_profile_new(self._on_new_profile)
-  File "C:\Users\User\OneDrive\מסמכים\GitHub\voice-changer-platform\src\ui\profile_selector.py", line 155, in on_profile_new
-    self._new_callbacks.append(cb)
-    ^^^^^^^^^^^^^^^^^^^
-AttributeError: 'ProfileSelector' object has no attribute '_new_callbacks'
+2026-03-17 20:55:09 [INFO] src.engine.effects: PitchShifter: CUDA GPU detected (NVIDIA GeForce RTX 3070) — using GPU acceleration.
+2026-03-17 20:55:09 [INFO] src.app: Initialising VoiceChangerApp…
+2026-03-17 20:55:09 [DEBUG] src.app: Settings loaded from C:\Users\User\OneDrive\מסמכים\GitHub\voice-changer-platform\config\settings.json
+2026-03-17 20:55:09 [DEBUG] src.audio.devices: Found 55 audio devices.
+2026-03-17 20:55:09 [INFO] src.engine.model_manager: Model catalog refreshed: 0 model(s) found.
+2026-03-17 20:55:09 [DEBUG] src.profiles.profile_manager: Loaded profile: custom_ai (AI Voice Clone)
+2026-03-17 20:55:09 [DEBUG] src.profiles.profile_manager: Loaded profile: deep_male (Deep Male)
+2026-03-17 20:55:09 [DEBUG] src.profiles.profile_manager: Loaded profile: female (Female)
+2026-03-17 20:55:09 [DEBUG] src.profiles.profile_manager: Loaded profile: robot (Robot)
+2026-03-17 20:55:09 [INFO] src.profiles.profile_manager: Loaded 4 profile(s).
+2026-03-17 20:55:09 [INFO] src.profiles.profile_manager: Active profile: deep_male – Deep Male
+2026-03-17 20:55:09 [DEBUG] src.engine.pipeline: Added effect: NoiseGate
+2026-03-17 20:55:09 [DEBUG] src.engine.pipeline: Added effect: PitchShifter
+2026-03-17 20:55:09 [DEBUG] src.engine.pipeline: Added effect: FormantShifter
+2026-03-17 20:55:09 [DEBUG] src.engine.pipeline: Added effect: ReverbEffect
+2026-03-17 20:55:09 [INFO] src.engine.pipeline: Pipeline loaded from profile 'Deep Male' (4 effects).
+2026-03-17 20:55:09 [INFO] src.engine.pipeline: RVC engine detached.
+2026-03-17 20:55:09 [INFO] src.audio.devices: VB-Cable detected: CABLE Input (VB-Audio Virtual C
+2026-03-17 20:55:09 [INFO] src.app: VoiceChangerApp ready.
+2026-03-17 20:55:10 [DEBUG] src.audio.devices: Found 55 audio devices.
+2026-03-17 20:55:10 [INFO] src.audio.devices: VB-Cable detected: CABLE Input (VB-Audio Virtual C
+2026-03-17 20:57:46 [INFO] src.engine.effects: PitchShifter: CUDA GPU detected (NVIDIA GeForce RTX 3070) — using GPU acceleration.

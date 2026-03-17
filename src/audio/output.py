@@ -71,8 +71,10 @@ class AudioOutput:
         self.dtype = dtype
 
         self._stream: Optional[sd.OutputStream] = None
+        # Keep enough buffer for ~170ms at 256-frame chunks @ 48kHz  (32 chunks)
+        # to absorb any processing jitter without dropping chunks.
         self._audio_queue: queue.Queue[np.ndarray] = queue.Queue(
-            maxsize=buffer_size // chunk_size
+            maxsize=max(buffer_size // chunk_size, 32)
         )
         self._running = False
         self._output_level: float = 0.0

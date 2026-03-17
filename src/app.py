@@ -67,6 +67,10 @@ class VoiceChangerApp:
 
         self.stream: Optional[AudioStream] = None
 
+        # Device indices chosen in the UI (may be set before stream is created)
+        self._pending_input_idx: Optional[int] = None
+        self._pending_output_idx: Optional[int] = None
+
         # Load profiles
         self.profile_manager.load_all()
         self.profile_manager.add_on_change_callback(self._on_profile_changed)
@@ -125,9 +129,11 @@ class VoiceChangerApp:
         chunk_size = audio_cfg.get("chunk_size", DEFAULT_CHUNK_SIZE)
         buffer_size = audio_cfg.get("buffer_size", DEFAULT_BUFFER_SIZE)
 
-        # Resolve devices
-        input_idx = self._resolve_device("input")
-        output_idx = self._resolve_device("output", prefer_vbcable=True)
+        # Use UI-selected device if available, otherwise fall back to settings/defaults
+        input_idx = self._pending_input_idx if self._pending_input_idx is not None \
+            else self._resolve_device("input")
+        output_idx = self._pending_output_idx if self._pending_output_idx is not None \
+            else self._resolve_device("output", prefer_vbcable=True)
 
         self.stream = AudioStream(
             input_device=input_idx,
@@ -163,21 +169,48 @@ class VoiceChangerApp:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def start(self) -> bool:
-        """Start audio streaming.
+        """Start audio streaming.  Auto-retries with lower sample rates.
 
         Returns:
             *True* if started successfully.
         """
-        if self.stream is None:
-            self._init_stream()
-
-        try:
-            self.stream.start()
-            logger.info("Audio stream started.")
+        if self.stream and self.stream.is_running:
             return True
-        except Exception as exc:
-            logger.error("Failed to start audio stream: %s", exc)
-            return False
+
+        audio_cfg = self._settings.get("audio", {})
+        chunk_size = audio_cfg.get("chunk_size", DEFAULT_CHUNK_SIZE)
+        buffer_size = audio_cfg.get("buffer_size", DEFAULT_BUFFER_SIZE)
+        channels = audio_cfg.get("channels", DEFAULT_CHANNELS)
+
+        input_idx = self._pending_input_idx if self._pending_input_idx is not None \
+            else self._resolve_device("input")
+        output_idx = self._pending_output_idx if self._pending_output_idx is not None \
+            else self._resolve_device("output", prefer_vbcable=True)
+
+        for sr in [DEFAULT_SAMPLE_RATE, 44100, 16000, 8000]:
+            try:
+                self.stream = AudioStream(
+                    input_device=input_idx,
+                    output_device=output_idx,
+                    sample_rate=sr,
+                    channels=channels,
+                    chunk_size=chunk_size,
+                    buffer_size=buffer_size,
+                )
+                self.stream.set_processor(self.pipeline.process)
+                self.stream.start()
+                logger.info("Audio stream started at %d Hz (input=%s output=%s).",
+                            sr, input_idx, output_idx)
+                return True
+            except Exception as exc:
+                logger.warning("Sample rate %d Hz failed: %s — trying next…", sr, exc)
+                try:
+                    self.stream.stop()
+                except Exception:
+                    pass
+
+        logger.error("All sample rates failed — stream could not start.")
+        return False
 
     def stop(self) -> None:
         """Stop audio streaming."""
@@ -196,12 +229,14 @@ class VoiceChangerApp:
     # ── Device management ─────────────────────────────────────────────────────
 
     def set_input_device(self, device_index: Optional[int]) -> None:
-        """Switch the input device on the running stream."""
+        """Switch the input device (stores selection even before stream starts)."""
+        self._pending_input_idx = device_index
         if self.stream:
             self.stream.set_input_device(device_index)
 
     def set_output_device(self, device_index: Optional[int]) -> None:
-        """Switch the output device on the running stream."""
+        """Switch the output device (stores selection even before stream starts)."""
+        self._pending_output_idx = device_index
         if self.stream:
             self.stream.set_output_device(device_index)
 
