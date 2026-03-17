@@ -1,0 +1,12 @@
+{
+    "name": "Echo Hall",
+    "description": "Cathedral echo – voice drowned in reverb",
+    "icon": "🏛️",
+    "pitch_shift": -2.0,
+    "formant_shift": -1.0,
+    "reverb_level": 0.85,
+    "noise_gate_threshold": -60,
+    "gain": 1.0,
+    "voice_disguise": 0.55,
+    "use_ai": false
+}

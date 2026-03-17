@@ -107,13 +107,18 @@ class PitchShifter(IAudioEffect):
             except ImportError:
                 pass
 
+    # GPU is only beneficial for chunks >= 4096 samples.
+    # Below that the CUDA kernel-launch + CPU↔GPU copy overhead dominates.
+    _GPU_MIN_SAMPLES = 4096
+
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
             return audio_data
 
         mono, was_2d, channels = self._to_mono_1d(audio_data)
 
-        if self._torchaudio_ok and _CUDA:
+        if (self._torchaudio_ok and _CUDA
+                and len(mono) >= self._GPU_MIN_SAMPLES):
             out = self._process_gpu(mono, sample_rate)
         else:
             out = self._process_cpu(mono)
@@ -416,15 +421,115 @@ class Compressor(IAudioEffect):
                 setattr(self, key, float(params[key]))
 
 
-# ── Factory ───────────────────────────────────────────────────────────────────
+# ── Voice Disguise ─────────────────────────────────────────────────────────
+
+
+class VoiceDisguise(IAudioEffect):
+    """
+    Identity-masking effect that makes a voice unrecognisable.
+
+    Combines three techniques:
+    1. **Spectral noise injection** – band-limited noise shaped by the
+       signal envelope, breaking unique vocal fingerprints.
+    2. **Micro-pitch modulation** – slow vibrato (3-6 Hz) that shifts
+       the fundamental frequency irregularly.
+    3. **Formant smearing** – slight random warping of the spectral
+       envelope each chunk, destroying consistent formant patterns.
+
+    *intensity* ranges from 0.0 (off) to 1.0 (maximum disguise).
+    """
+
+    def __init__(self, intensity: float = 0.5) -> None:
+        self.intensity = float(intensity)
+        self._phase: float = 0.0
+        # Pre-computed bandpass filter coefficients (set on first call)
+        self._bp_b: np.ndarray | None = None
+        self._bp_a: np.ndarray | None = None
+        self._bp_sr: int = 0
+        self._noise_state: np.ndarray | None = None
+
+    def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
+        if self.intensity == 0.0:
+            return audio_data
+
+        mono, was_2d, channels = self._to_mono_1d(audio_data)
+        n = len(mono)
+        if n < 4:
+            return audio_data
+
+        # ── 1. Band-limited spectral noise (300–3000 Hz) ─────────────────
+        rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
+        noise = np.random.randn(n).astype(np.float32) * rms * self.intensity * 0.18
+
+        # Build bandpass filter once per sample-rate
+        if self._bp_b is None or self._bp_sr != sample_rate:
+            nyq = sample_rate / 2.0
+            lo = min(300 / nyq, 0.98)
+            hi = min(3000 / nyq, 0.98)
+            if lo < hi:
+                self._bp_b, self._bp_a = signal.butter(3, [lo, hi], btype="band")
+            else:
+                self._bp_b, self._bp_a = np.array([1.0]), np.array([1.0])
+            self._bp_sr = sample_rate
+            self._noise_state = None
+
+        # Apply bandpass with state continuity between chunks
+        if self._noise_state is None:
+            self._noise_state = signal.lfiltic(self._bp_b, self._bp_a, [])
+
+        noise_filt, self._noise_state = signal.lfilter(
+            self._bp_b, self._bp_a, noise, zi=self._noise_state
+        )
+
+        # ── 2. Micro-pitch modulation (irregular vibrato) ────────────────
+        t = np.arange(n, dtype=np.float32) / sample_rate + self._phase
+        mod_freq = 3.5 + self.intensity * 2.5          # 3.5 – 6.0 Hz
+        mod_depth = 0.002 + self.intensity * 0.006      # samples of shift
+        phase_offset = mod_depth * np.sin(2.0 * np.pi * mod_freq * t)
+        self._phase += n / sample_rate
+
+        indices = np.arange(n, dtype=np.float32) + phase_offset * sample_rate * 0.001
+        indices = np.clip(indices, 0, n - 1)
+        modulated = np.interp(np.arange(n, dtype=np.float32), indices, mono).astype(np.float32)
+
+        # ── 3. Formant smear – random spectral stretch per chunk ─────────
+        spec = np.fft.rfft(modulated)
+        n_bins = len(spec)
+        # Slight random warp factor that changes each chunk
+        warp = 1.0 + (np.random.rand() - 0.5) * 0.08 * self.intensity
+        old_bins = np.arange(n_bins, dtype=np.float32)
+        new_bins = old_bins / warp
+        spec_real = np.interp(old_bins, new_bins, spec.real, left=0, right=0)
+        spec_imag = np.interp(old_bins, new_bins, spec.imag, left=0, right=0)
+        smeared = np.fft.irfft(spec_real + 1j * spec_imag)[:n].astype(np.float32)
+
+        if len(smeared) < n:
+            smeared = np.pad(smeared, (0, n - len(smeared)))
+
+        # ── Combine ──────────────────────────────────────────────────────
+        out = smeared + noise_filt.astype(np.float32)
+        out = np.clip(out, -1.0, 1.0)
+
+        return self._restore(out, was_2d, channels)
+
+    def get_params(self) -> dict[str, Any]:
+        return {"intensity": self.intensity}
+
+    def set_params(self, params: dict[str, Any]) -> None:
+        if "intensity" in params:
+            self.intensity = float(params["intensity"])
+
+
+# ── Factory ───────────────────────────────────────────────────────────────
 
 EFFECT_REGISTRY: dict[str, type[IAudioEffect]] = {
-    "pitch_shift":   PitchShifter,
-    "formant_shift": FormantShifter,
-    "noise_gate":    NoiseGate,
-    "reverb":        ReverbEffect,
-    "volume":        VolumeControl,
-    "compressor":    Compressor,
+    "pitch_shift":     PitchShifter,
+    "formant_shift":   FormantShifter,
+    "noise_gate":      NoiseGate,
+    "reverb":          ReverbEffect,
+    "volume":          VolumeControl,
+    "compressor":      Compressor,
+    "voice_disguise":  VoiceDisguise,
 }
 
 

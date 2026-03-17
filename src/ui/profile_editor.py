@@ -47,6 +47,7 @@ _FORMANT_MIN, _FORMANT_MAX = -6.0, 6.0
 _REVERB_MIN, _REVERB_MAX = 0.0, 1.0
 _GATE_MIN, _GATE_MAX = -60.0, 0.0
 _GAIN_MIN, _GAIN_MAX = 0.0, 4.0
+_DISGUISE_MIN, _DISGUISE_MAX = 0.0, 1.0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -163,6 +164,7 @@ class ProfileEditorDialog:
         self._var_reverb      = tk.DoubleVar(value=p.reverb_level)
         self._var_gate        = tk.DoubleVar(value=p.noise_gate_threshold)
         self._var_gain        = tk.DoubleVar(value=p.gain)
+        self._var_disguise    = tk.DoubleVar(value=getattr(p, 'voice_disguise', 0.0))
         self._var_use_ai      = tk.BooleanVar(value=p.use_ai)
         self._var_ai_model    = tk.StringVar(value=p.ai_model_path)
         self._var_ai_f0       = tk.StringVar(value=p.ai_f0_method)
@@ -312,6 +314,8 @@ class ProfileEditorDialog:
                          _GATE_MIN, _GATE_MAX, 1.0)
         self._slider_row(parent, "Gain (×)", self._var_gain,
                          _GAIN_MIN, _GAIN_MAX, 0.05)
+        self._slider_row(parent, "🔒 Voice Disguise", self._var_disguise,
+                         _DISGUISE_MIN, _DISGUISE_MAX, 0.05)
 
     def _build_ai_section(self, parent: tk.Widget) -> None:
         self._section_title(parent, "AI Voice Conversion (RVC)")
@@ -365,6 +369,7 @@ class ProfileEditorDialog:
             reverb_level=round(self._var_reverb.get(), 3),
             noise_gate_threshold=round(self._var_gate.get(), 1),
             gain=round(self._var_gain.get(), 3),
+            voice_disguise=round(self._var_disguise.get(), 3),
             use_ai=self._var_use_ai.get(),
             ai_model_path=self._var_ai_model.get().strip(),
             ai_f0_method=self._var_ai_f0.get(),

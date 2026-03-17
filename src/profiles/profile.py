@@ -30,6 +30,9 @@ class VoiceProfile:
     noise_gate_threshold: float = -40.0  # dBFS
     gain: float = 1.0                    # linear multiplier
 
+    # ── Voice disguise (identity masking) ────────────────────────────────────────
+    voice_disguise: float = 0.0          # 0.0 (off) – 1.0 (maximum disguise)
+
     # ── AI voice conversion ────────────────────────────────────────────────────
     use_ai: bool = False
     ai_model_path: str = ""

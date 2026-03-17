@@ -2,12 +2,12 @@
   "audio": {
     "sample_rate": 48000,
     "channels": 1,
-    "chunk_size": 256,
-    "buffer_size": 1024
+    "chunk_size": 128,
+    "buffer_size": 512
   },
   "processing": {
     "use_gpu": true,
-    "latency_preset": "low",
+    "latency_preset": "ultra",
     "max_latency_ms": 20
   },
   "ui": {

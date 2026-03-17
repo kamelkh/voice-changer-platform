@@ -1,0 +1,12 @@
+{
+    "name": "Child",
+    "description": "Young kid voice – unrecognisable pitch",
+    "icon": "👦",
+    "pitch_shift": 8.0,
+    "formant_shift": 5.5,
+    "reverb_level": 0.0,
+    "noise_gate_threshold": -60,
+    "gain": 1.05,
+    "voice_disguise": 0.4,
+    "use_ai": false
+}

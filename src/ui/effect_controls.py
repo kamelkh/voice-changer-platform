@@ -131,6 +131,7 @@ class EffectControls(tk.Frame):
         ("reverb_level", "Reverb", MIN_REVERB, MAX_REVERB, 0.0, 0.01, ""),
         ("noise_gate", "Noise Gate", MIN_NOISE_GATE_DB, MAX_NOISE_GATE_DB, -40.0, 1.0, "dB"),
         ("gain", "Volume / Gain", MIN_GAIN, MAX_GAIN, 1.0, 0.05, ""),
+        ("voice_disguise", "🔒 Voice Disguise", 0.0, 1.0, 0.0, 0.05, ""),
     ]
 
     def __init__(
@@ -165,6 +166,7 @@ class EffectControls(tk.Frame):
         self.set_param("reverb_level", profile.reverb_level)
         self.set_param("noise_gate", profile.noise_gate_threshold)
         self.set_param("gain", profile.gain)
+        self.set_param("voice_disguise", getattr(profile, 'voice_disguise', 0.0))
 
     # ── UI construction ───────────────────────────────────────────────────────
 

@@ -1,0 +1,12 @@
+{
+    "name": "Chipmunk",
+    "description": "Super high-pitched squeaky – completely different",
+    "icon": "🐿️",
+    "pitch_shift": 12.0,
+    "formant_shift": 6.0,
+    "reverb_level": 0.0,
+    "noise_gate_threshold": -60,
+    "gain": 1.2,
+    "voice_disguise": 0.45,
+    "use_ai": false
+}

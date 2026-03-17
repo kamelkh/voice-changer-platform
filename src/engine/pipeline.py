@@ -17,6 +17,7 @@ from src.engine.effects import (
     PitchShifter,
     FormantShifter,
     ReverbEffect,
+    VoiceDisguise,
     VolumeControl,
 )
 from src.utils.logger import get_logger
@@ -153,6 +154,9 @@ class AudioPipeline:
 
         if profile.formant_shift != 0.0:
             self.add_effect(FormantShifter(semitones=profile.formant_shift))
+
+        if getattr(profile, 'voice_disguise', 0.0) > 0.0:
+            self.add_effect(VoiceDisguise(intensity=profile.voice_disguise))
 
         if profile.reverb_level > 0.0:
             self.add_effect(ReverbEffect(wet_level=profile.reverb_level))

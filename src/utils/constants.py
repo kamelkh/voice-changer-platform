@@ -24,9 +24,10 @@ SETTINGS_FILE: Path = CONFIG_DIR / "settings.json"
 # 48 kHz is native for WASAPI / most voice apps (Zoom, Discord, WhatsApp)
 DEFAULT_SAMPLE_RATE: int = 48000
 DEFAULT_CHANNELS: int = 1
-# 256 frames @ 48 kHz = ~5.3 ms per chunk  (target < 20 ms total round-trip)
-DEFAULT_CHUNK_SIZE: int = 256
-DEFAULT_BUFFER_SIZE: int = 1024
+# 1024 frames @ 16 kHz = 64 ms per chunk — good balance between latency and
+# processing throughput (avoids per-chunk overhead dominating at 256 frames).
+DEFAULT_CHUNK_SIZE: int = 1024
+DEFAULT_BUFFER_SIZE: int = 4096
 DEFAULT_DTYPE: str = "float32"
 
 # ── Low-latency presets ───────────────────────────────────────────────────────

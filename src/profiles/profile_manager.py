@@ -89,13 +89,18 @@ class ProfileManager:
             self.save_profile(key)
         logger.info("Profile added: %s (%s)", key, profile.name)
 
-    def save_profile(self, key: str) -> bool:
+    def save_profile(self, key: str, profile: Optional[VoiceProfile] = None) -> bool:
         """
         Persist a profile to ``config/profiles/<key>.json``.
+
+        If *profile* is given it is stored in memory first, then written
+        to disk.  If omitted the existing in-memory profile is saved.
 
         Returns:
             *True* on success.
         """
+        if profile is not None:
+            self._profiles[key] = profile
         profile = self._profiles.get(key)
         if profile is None:
             logger.warning("Cannot save unknown profile key: %s", key)

@@ -94,6 +94,9 @@ class AudioStream:
         self._proc_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
         self._proc_thread: Optional[threading.Thread] = None
 
+        # Monitor callback (for live preview through headphones)
+        self._monitor_callback: Optional[callable] = None
+
         # Latency monitoring
         self._last_chunk_time: float = 0.0
         self._latency_ms: float = 0.0
@@ -112,6 +115,10 @@ class AudioStream:
             processor: Function ``(np.ndarray) -> np.ndarray``.
         """
         self._processor = processor
+
+    def set_monitor_callback(self, callback: Optional[callable]) -> None:
+        """Set a callback that receives processed + resampled audio for monitoring."""
+        self._monitor_callback = callback
 
     def set_input_device(self, device_index: Optional[int]) -> None:
         """Change the input device.  Restarts the stream if running."""
@@ -248,6 +255,13 @@ class AudioStream:
             for i in range(0, n_frames, out_cs):
                 piece = resampled[i : i + out_cs]
                 self._output.write(piece)
+
+        # Send resampled audio to monitor (headphones preview)
+        if self._monitor_callback is not None:
+            try:
+                self._monitor_callback(resampled)
+            except Exception as exc:
+                logger.error("Monitor callback error: %s", exc)
 
     def _processing_loop(self) -> None:
         """Dedicated thread: dequeue → process → write to output."""

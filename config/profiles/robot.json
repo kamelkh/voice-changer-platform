@@ -1,11 +1,12 @@
 {
     "name": "Robot",
-    "description": "Robotic metallic voice",
+    "description": "Metallic robotic voice – zero identity",
     "icon": "🤖",
-    "pitch_shift": 0.0,
-    "formant_shift": 0.0,
-    "reverb_level": 0.4,
+    "pitch_shift": -3.0,
+    "formant_shift": -6.0,
+    "reverb_level": 0.6,
     "noise_gate_threshold": -60,
-    "gain": 1.2,
+    "gain": 1.4,
+    "voice_disguise": 0.75,
     "use_ai": false
 }

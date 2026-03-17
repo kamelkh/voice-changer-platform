@@ -9,8 +9,15 @@ Owns all subsystems and wires them together:
 from __future__ import annotations
 
 import json
+import queue
+import threading
+from math import gcd
 from pathlib import Path
 from typing import Optional
+
+import numpy as np
+import sounddevice as sd
+from scipy.signal import resample_poly
 
 from src.audio.devices import AudioDeviceManager
 from src.audio.stream import AudioStream
@@ -70,6 +77,12 @@ class VoiceChangerApp:
         # Device indices chosen in the UI (may be set before stream is created)
         self._pending_input_idx: Optional[int] = None
         self._pending_output_idx: Optional[int] = None
+
+        # Monitor (hear your own processed voice through headphones)
+        self._monitor_enabled: bool = False
+        self._monitor_stream: Optional[sd.OutputStream] = None
+        self._monitor_queue: queue.Queue = queue.Queue(maxsize=64)
+        self._monitor_sr: int = DEFAULT_SAMPLE_RATE
 
         # Load profiles
         self.profile_manager.load_all()
@@ -228,6 +241,9 @@ class VoiceChangerApp:
                 )
                 self.stream.set_processor(self.pipeline.process)
                 self.stream.start()
+                # Re-hook monitor if enabled
+                if self._monitor_enabled:
+                    self.stream.set_monitor_callback(self._on_monitor_audio)
                 logger.info("[START] SUCCESS  input=%d Hz  output=%d Hz", in_sr, out_sr)
                 return True
             except Exception as exc:
@@ -248,6 +264,7 @@ class VoiceChangerApp:
 
     def shutdown(self) -> None:
         """Cleanly shut down all subsystems."""
+        self._stop_monitor()
         self.stop()
         if self._rvc_engine and self._rvc_engine.is_loaded:
             self._rvc_engine.unload_model()
@@ -269,6 +286,153 @@ class VoiceChangerApp:
         self._pending_output_idx = device_index
         if self.stream and self.stream.is_running:
             self.stream.set_output_device(device_index)
+
+    # ── Monitor (live preview through headphones) ─────────────────────────────
+
+    @property
+    def monitor_enabled(self) -> bool:
+        return self._monitor_enabled
+
+    def toggle_monitor(self) -> bool:
+        """Toggle voice monitoring on/off.  Returns new state."""
+        if self._monitor_enabled:
+            self._stop_monitor()
+        else:
+            self._start_monitor()
+        return self._monitor_enabled
+
+    def _start_monitor(self) -> None:
+        """Open a second output stream to the system default output device."""
+        try:
+            # Find a real output device (NOT VB-Cable) for monitoring
+            monitor_idx = self._find_monitor_device()
+            dev_info = sd.query_devices(monitor_idx)
+            sr = int(dev_info['default_samplerate'])
+            logger.info("[MONITOR] Starting monitor on device [%d] %s @ %d Hz",
+                        monitor_idx, dev_info['name'], sr)
+
+            self._monitor_sr = sr
+            # Drain any stale data
+            while not self._monitor_queue.empty():
+                try:
+                    self._monitor_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            self._monitor_stream = sd.OutputStream(
+                device=monitor_idx,
+                samplerate=sr,
+                channels=1,
+                dtype='float32',
+                blocksize=1024,
+                callback=self._monitor_callback_sd,
+            )
+            self._monitor_stream.start()
+
+            # Hook into the audio stream
+            if self.stream:
+                self.stream.set_monitor_callback(self._on_monitor_audio)
+
+            self._monitor_enabled = True
+            logger.info("[MONITOR] Monitor started.")
+        except Exception as exc:
+            logger.error("[MONITOR] Failed to start: %s", exc)
+            self._monitor_enabled = False
+
+    def _stop_monitor(self) -> None:
+        """Close the monitor output stream."""
+        if self.stream:
+            self.stream.set_monitor_callback(None)
+        if self._monitor_stream is not None:
+            try:
+                self._monitor_stream.stop()
+                self._monitor_stream.close()
+            except Exception:
+                pass
+            self._monitor_stream = None
+        self._monitor_enabled = False
+        logger.info("[MONITOR] Monitor stopped.")
+
+    def _find_monitor_device(self) -> int:
+        """Find a suitable output device for monitoring (NOT VB-Cable).
+
+        Prefers WASAPI devices, avoids anything with 'cable' or 'virtual' in
+        the name.  Falls back to the system default if nothing better is found.
+        """
+        vb_keywords = {"cable", "virtual", "vb-audio"}
+        devices = sd.query_devices()
+        best = None
+
+        # Pass 1: WASAPI output devices that are NOT virtual cables
+        for i, dev in enumerate(devices):
+            if dev['max_output_channels'] < 1:
+                continue
+            name_lower = dev['name'].lower()
+            if any(kw in name_lower for kw in vb_keywords):
+                continue
+            if dev.get('hostapi') == 2:  # WASAPI
+                best = i
+                # Prefer the current input device's output side (e.g. Galaxy Buds)
+                if self._pending_input_idx is not None:
+                    in_dev = sd.query_devices(self._pending_input_idx)
+                    # Match base name (e.g. "Galaxy Buds" appears in both)
+                    in_base = in_dev['name'].split('(')[0].strip().lower()
+                    if in_base and in_base in name_lower:
+                        logger.info("[MONITOR] Matched headphone output: [%d] %s", i, dev['name'])
+                        return i
+
+        # Pass 2: any non-virtual output device
+        if best is None:
+            for i, dev in enumerate(devices):
+                if dev['max_output_channels'] < 1:
+                    continue
+                name_lower = dev['name'].lower()
+                if any(kw in name_lower for kw in vb_keywords):
+                    continue
+                best = i
+                break
+
+        if best is not None:
+            return best
+
+        # Ultimate fallback: system default
+        return sd.default.device[1]
+
+    def _on_monitor_audio(self, audio: np.ndarray) -> None:
+        """Called from the processing thread with resampled audio at output_sample_rate."""
+        # The audio is at output_sample_rate; resample to monitor_sr if needed
+        out_sr = self.stream.output_sample_rate if self.stream else DEFAULT_SAMPLE_RATE
+        if out_sr != self._monitor_sr:
+            g = gcd(self._monitor_sr, out_sr)
+            up = self._monitor_sr // g
+            down = out_sr // g
+            audio = resample_poly(audio.astype(np.float32), up, down).astype(np.float32)
+
+        try:
+            self._monitor_queue.put_nowait(audio)
+        except queue.Full:
+            try:
+                self._monitor_queue.get_nowait()
+                self._monitor_queue.put_nowait(audio)
+            except queue.Empty:
+                pass
+
+    def _monitor_callback_sd(self, outdata: np.ndarray, frames: int,
+                              time_info, status) -> None:
+        """sounddevice callback — fills the monitor output buffer from the queue."""
+        filled = 0
+        while filled < frames:
+            try:
+                chunk = self._monitor_queue.get_nowait()
+            except queue.Empty:
+                break
+            chunk = chunk.ravel()
+            remain = frames - filled
+            use = min(len(chunk), remain)
+            outdata[filled:filled + use, 0] = chunk[:use]
+            filled += use
+        if filled < frames:
+            outdata[filled:, :] = 0.0
 
     # ── Profile management ────────────────────────────────────────────────────
 
@@ -358,6 +522,7 @@ class VoiceChangerApp:
             NoiseGate,
             PitchShifter,
             ReverbEffect,
+            VoiceDisguise,
             VolumeControl,
         )
 
@@ -367,6 +532,7 @@ class VoiceChangerApp:
             "reverb_level": (ReverbEffect, "wet_level"),
             "noise_gate": (NoiseGate, "threshold_db"),
             "gain": (VolumeControl, "gain"),
+            "voice_disguise": (VoiceDisguise, "intensity"),
         }
 
         if param_name not in mapping:

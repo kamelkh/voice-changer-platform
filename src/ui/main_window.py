@@ -161,6 +161,24 @@ class MainWindow:
         )
         self._toggle_btn.pack(pady=(8, 4))
 
+        # Monitor button (hear your own processed voice)
+        self._monitor_btn = tk.Button(
+            right_panel,
+            text="🎧  Monitor OFF",
+            font=("Segoe UI", 10),
+            bg=DARK_SURFACE,
+            fg=SUBTEXT_COLOR,
+            activebackground="#1e3a5f",
+            activeforeground="white",
+            relief=tk.FLAT,
+            bd=0,
+            padx=16,
+            pady=8,
+            cursor="hand2",
+            command=self._toggle_monitor,
+        )
+        self._monitor_btn.pack(pady=(4, 4))
+
         # Latency preset selector
         preset_frame = tk.Frame(right_panel, bg=DARK_BG)
         preset_frame.pack(pady=(0, 4))
@@ -247,6 +265,26 @@ class MainWindow:
             )
             self._status_bar.set_active(False)
             self._status_bar.set_message("Voice changer stopped")
+
+    def _toggle_monitor(self) -> None:
+        """Toggle voice monitoring (hear your own processed voice through headphones)."""
+        enabled = self._app.toggle_monitor()
+        if enabled:
+            self._monitor_btn.config(
+                text="🎧  Monitor ON",
+                bg="#7c3aed",
+                fg="white",
+                activebackground="#6d28d9",
+            )
+            self._status_bar.set_message("🎧 Monitor ON — hearing your processed voice")
+        else:
+            self._monitor_btn.config(
+                text="🎧  Monitor OFF",
+                bg=DARK_SURFACE,
+                fg=SUBTEXT_COLOR,
+                activebackground="#1e3a5f",
+            )
+            self._status_bar.set_message("Monitor OFF")
 
     def _on_profile_selected(self, key: str, profile) -> None:
         """Called when a profile card is clicked."""
