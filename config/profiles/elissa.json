@@ -11,7 +11,7 @@
     "accent_dialect": "none",
     "accent_intensity": 0.0,
     "use_ai": true,
-    "ai_model_path": "models/Elissa150.pth",
+    "ai_model_path": "models/Elissa.pth",
     "ai_index_rate": 0.75,
     "ai_pitch_shift": 0,
     "ai_f0_method": "rmvpe",

@@ -77,11 +77,19 @@ class ModelManager:
                 name = pth_path.stem
                 # Check for a matching index file
                 index_path: Optional[Path] = None
+                # 1. Exact match: model.index
                 for idx_ext in RVC_INDEX_EXTENSIONS:
                     candidate = pth_path.with_suffix(idx_ext)
                     if candidate.exists():
                         index_path = candidate
                         break
+                # 2. Fuzzy match: any .index file containing the model name
+                if index_path is None:
+                    stem_lower = name.lower()
+                    for idx_file in self.models_dir.glob("*.index"):
+                        if stem_lower in idx_file.stem.lower():
+                            index_path = idx_file
+                            break
 
                 info = ModelInfo(
                     name=name,
