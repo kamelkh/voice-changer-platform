@@ -24,13 +24,12 @@ SETTINGS_FILE: Path = CONFIG_DIR / "settings.json"
 # 48 kHz is native for WASAPI / most voice apps (Zoom, Discord, WhatsApp)
 DEFAULT_SAMPLE_RATE: int = 48000
 DEFAULT_CHANNELS: int = 1
-# 1024 frames @ 48 kHz = 21.3 ms per chunk.
-# This gives the processing thread ~21 ms budget per chunk, which is enough
-# for FFT-based effects (PitchShifter, FormantShifter, AccentEffect, etc.)
-# without causing underruns on a typical PC.  512 was too tight and caused
-# the queue to fill up and chunks to be dropped (resulting in crackling).
-DEFAULT_CHUNK_SIZE: int = 1024
-DEFAULT_BUFFER_SIZE: int = 4096
+# 2048 frames @ 48 kHz = 42.7 ms per chunk.
+# Chosen for dedicated-GPU setups (≥4 GB VRAM): larger blocks amortise the
+# CUDA H2D/D2H transfer overhead and let torchaudio/torch.fft process audio
+# entirely on the GPU with maximum throughput.  CPU usage is minimised.
+DEFAULT_CHUNK_SIZE: int = 2048
+DEFAULT_BUFFER_SIZE: int = 8192
 DEFAULT_DTYPE: str = "float32"
 
 # ── Low-latency presets ───────────────────────────────────────────────────────

@@ -102,14 +102,24 @@ class PitchShifter(IAudioEffect):
         self._torchaudio_ok = False
         if _TORCH_OK and _CUDA:
             try:
-                import torchaudio  # noqa: F401
+                import torchaudio.functional as _taf  # noqa: F401
                 self._torchaudio_ok = True
+                # Warm-up: run a dummy resample so that the CUDA JIT kernels
+                # are compiled now (at load time) rather than on the first
+                # real audio chunk, which would cause a ~200 ms latency spike.
+                _w = torch.zeros(1, 1024, device=_DEVICE)
+                _o = _taf.resample(_w, orig_freq=48000, new_freq=44100)
+                _taf.resample(_o, orig_freq=44100, new_freq=48000)
+                torch.cuda.synchronize()
+                del _w, _o
+                logger.info("PitchShifter: torchaudio GPU warmup done.")
             except ImportError:
                 pass
 
-    # GPU is only beneficial for chunks >= 4096 samples.
-    # Below that the CUDA kernel-launch + CPU↔GPU copy overhead dominates.
-    _GPU_MIN_SAMPLES = 4096
+    # 0 = always use GPU when CUDA is available (dedicated GPU mode).
+    # The caller is expected to have a ≥4 GB VRAM GPU; on such hardware the
+    # H2D/D2H overhead for any realistic chunk size is negligible (<100 µs).
+    _GPU_MIN_SAMPLES = 0
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
@@ -614,9 +624,8 @@ class AccentEffect(IAudioEffect):
         },
     }
 
-    # GPU is only worth it when CUDA kernel-launch overhead is amortised
-    # over enough samples (FFT size ≥ 1024).
-    _GPU_MIN_SAMPLES: int = 1024
+    # 0 = always use GPU when CUDA is available (dedicated GPU mode).
+    _GPU_MIN_SAMPLES: int = 0
 
     def __init__(self, dialect: str = "palestinian",
                  intensity: float = 0.5) -> None:
