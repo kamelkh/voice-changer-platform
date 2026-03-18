@@ -563,6 +563,7 @@ class VoiceChangerApp:
     def update_effect_param(self, param_name: str, value: float) -> None:
         """Update a single effect parameter in the running pipeline."""
         from src.engine.effects import (  # noqa: PLC0415
+            AccentEffect,
             FormantShifter,
             NoiseGate,
             PitchShifter,
@@ -572,13 +573,14 @@ class VoiceChangerApp:
         )
 
         mapping = {
-            "input_gain":    None,  # handled separately below
-            "pitch_shift":   (PitchShifter, "semitones"),
-            "formant_shift": (FormantShifter, "semitones"),
-            "reverb_level":  (ReverbEffect, "wet_level"),
-            "noise_gate":    (NoiseGate, "threshold_db"),
-            "gain":          (VolumeControl, "gain"),
-            "voice_disguise":(VoiceDisguise, "intensity"),
+            "input_gain":      None,  # handled separately below
+            "pitch_shift":     (PitchShifter,   "semitones"),
+            "formant_shift":   (FormantShifter,  "semitones"),
+            "reverb_level":    (ReverbEffect,    "wet_level"),
+            "noise_gate":      (NoiseGate,       "threshold_db"),
+            "gain":            (VolumeControl,   "gain"),
+            "voice_disguise":  (VoiceDisguise,   "intensity"),
+            "accent_intensity":(AccentEffect,    "intensity"),
         }
 
         if param_name not in mapping:

@@ -13,6 +13,7 @@ import numpy as np
 
 from src.engine.effects import (
     IAudioEffect,
+    AccentEffect,
     Compressor,
     NoiseGate,
     PitchShifter,
@@ -197,6 +198,14 @@ class AudioPipeline:
 
         if getattr(profile, 'voice_disguise', 0.0) > 0.0:
             self.add_effect(VoiceDisguise(intensity=profile.voice_disguise))
+
+        accent_intensity = getattr(profile, 'accent_intensity', 0.0)
+        accent_dialect   = getattr(profile, 'accent_dialect', 'none')
+        if accent_intensity > 0.0 and accent_dialect != 'none':
+            self.add_effect(AccentEffect(
+                dialect=accent_dialect,
+                intensity=accent_intensity,
+            ))
 
         if profile.reverb_level > 0.0:
             self.add_effect(ReverbEffect(wet_level=profile.reverb_level))

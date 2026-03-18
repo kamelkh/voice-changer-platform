@@ -1,0 +1,14 @@
+{
+  "name": "Egyptian Accent",
+  "description": "Egyptian Arabic dialect – backed vowels, strong pharyngeal resonance",
+  "icon": "🗣️",
+  "pitch_shift": 0.0,
+  "formant_shift": 0.0,
+  "reverb_level": 0.07,
+  "noise_gate_threshold": -50,
+  "gain": 1.1,
+  "voice_disguise": 0.0,
+  "accent_dialect": "egyptian",
+  "accent_intensity": 0.75,
+  "use_ai": false
+}

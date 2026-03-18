@@ -33,6 +33,10 @@ class VoiceProfile:
     # ── Voice disguise (identity masking) ────────────────────────────────────────
     voice_disguise: float = 0.0          # 0.0 (off) – 1.0 (maximum disguise)
 
+    # ── Dialect accent ────────────────────────────────────────────────────────
+    accent_dialect: str = "none"         # "none" | "palestinian" | "syrian" | "lebanese" | "egyptian"
+    accent_intensity: float = 0.0        # 0.0 (off) – 1.0 (full accent)
+
     # ── AI voice conversion ────────────────────────────────────────────────────
     use_ai: bool = False
     ai_model_path: str = ""

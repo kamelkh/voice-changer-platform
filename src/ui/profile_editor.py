@@ -164,7 +164,9 @@ class ProfileEditorDialog:
         self._var_reverb      = tk.DoubleVar(value=p.reverb_level)
         self._var_gate        = tk.DoubleVar(value=p.noise_gate_threshold)
         self._var_gain        = tk.DoubleVar(value=p.gain)
-        self._var_disguise    = tk.DoubleVar(value=getattr(p, 'voice_disguise', 0.0))
+        self._var_disguise        = tk.DoubleVar(value=getattr(p, 'voice_disguise', 0.0))
+        self._var_accent_dialect  = tk.StringVar(value=getattr(p, 'accent_dialect', 'none'))
+        self._var_accent_intensity = tk.DoubleVar(value=getattr(p, 'accent_intensity', 0.0))
         self._var_use_ai      = tk.BooleanVar(value=p.use_ai)
         self._var_ai_model    = tk.StringVar(value=p.ai_model_path)
         self._var_ai_f0       = tk.StringVar(value=p.ai_f0_method)
@@ -317,6 +319,21 @@ class ProfileEditorDialog:
         self._slider_row(parent, "🔒 Voice Disguise", self._var_disguise,
                          _DISGUISE_MIN, _DISGUISE_MAX, 0.05)
 
+        # ── Accent dialect ────────────────────────────────────────────────
+        dialect_row = tk.Frame(parent, bg=DARK_BG)
+        dialect_row.pack(fill=tk.X, pady=3)
+        _make_label(dialect_row, "🗣️ Dialect accent").pack(side=tk.LEFT, width=130)
+        ttk.Combobox(
+            dialect_row,
+            textvariable=self._var_accent_dialect,
+            values=["none", "palestinian", "syrian", "lebanese", "egyptian"],
+            state="readonly",
+            width=14,
+        ).pack(side=tk.LEFT)
+
+        self._slider_row(parent, "Accent intensity", self._var_accent_intensity,
+                         0.0, 1.0, 0.05)
+
     def _build_ai_section(self, parent: tk.Widget) -> None:
         self._section_title(parent, "AI Voice Conversion (RVC)")
 
@@ -370,6 +387,8 @@ class ProfileEditorDialog:
             noise_gate_threshold=round(self._var_gate.get(), 1),
             gain=round(self._var_gain.get(), 3),
             voice_disguise=round(self._var_disguise.get(), 3),
+            accent_dialect=self._var_accent_dialect.get(),
+            accent_intensity=round(self._var_accent_intensity.get(), 3),
             use_ai=self._var_use_ai.get(),
             ai_model_path=self._var_ai_model.get().strip(),
             ai_f0_method=self._var_ai_f0.get(),
