@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -119,8 +120,11 @@ class ModelManager:
         """
         Download a model from a URL into the models directory.
 
+        Supports both direct ``.pth`` files and ``.zip`` archives — a ZIP is
+        automatically extracted and the archive is removed afterwards.
+
         Args:
-            url:               Direct download URL for the .pth file.
+            url:               Direct download URL for the .pth or .zip file.
             filename:          Override the download filename.
             expected_checksum: Optional SHA-256 hex digest for verification.
 
@@ -131,6 +135,11 @@ class ModelManager:
             filename = url.split("/")[-1].split("?")[0]
 
         dest_path = self.models_dir / filename
+
+        # If it's a zip, check whether the expected .pth already exists
+        if dest_path.suffix.lower() == ".zip":
+            return self._download_zip(url, dest_path, expected_checksum)
+
         if dest_path.exists():
             logger.info("Model already exists: %s", dest_path)
             self.refresh()
@@ -170,6 +179,74 @@ class ModelManager:
         except Exception as exc:
             logger.error("Download failed: %s", exc)
             dest_path.unlink(missing_ok=True)
+            return None
+
+    def _download_zip(
+        self,
+        url: str,
+        zip_path: Path,
+        expected_checksum: Optional[str] = None,
+    ) -> Optional[ModelInfo]:
+        """
+        Download a ZIP archive, extract all .pth/.index files flat into the
+        models directory, then remove the archive.
+
+        Returns the first :class:`ModelInfo` found after extraction.
+        """
+        logger.info("Downloading ZIP: %s → %s", url, zip_path)
+        try:
+            response = requests.get(url, stream=True, timeout=120)
+            response.raise_for_status()
+
+            total = int(response.headers.get("content-length", 0))
+            sha256 = hashlib.sha256()
+
+            with open(zip_path, "wb") as fout, tqdm(
+                total=total, unit="B", unit_scale=True, desc=zip_path.name
+            ) as progress:
+                for chunk in response.iter_content(chunk_size=65536):
+                    fout.write(chunk)
+                    sha256.update(chunk)
+                    progress.update(len(chunk))
+
+            actual_checksum = sha256.hexdigest()
+            if expected_checksum and actual_checksum != expected_checksum:
+                logger.error(
+                    "Checksum mismatch for '%s': expected %s, got %s",
+                    zip_path.name,
+                    expected_checksum,
+                    actual_checksum,
+                )
+                zip_path.unlink(missing_ok=True)
+                return None
+
+            # Extract .pth and .index files flat into models_dir
+            extracted_stems: list[str] = []
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                for member in zf.infolist():
+                    name = Path(member.filename).name
+                    if not name or member.is_dir():
+                        continue
+                    if Path(name).suffix.lower() not in (".pth", ".index"):
+                        continue
+                    dest = self.models_dir / name
+                    with zf.open(member) as src, open(dest, "wb") as dst:
+                        dst.write(src.read())
+                    logger.info("Extracted: %s", dest)
+                    if Path(name).suffix.lower() == ".pth":
+                        extracted_stems.append(Path(name).stem)
+
+            zip_path.unlink(missing_ok=True)
+            self.refresh()
+
+            if extracted_stems:
+                return self._catalog.get(extracted_stems[0])
+            logger.warning("ZIP contained no .pth files: %s", zip_path.name)
+            return None
+
+        except Exception as exc:
+            logger.error("ZIP download/extract failed: %s", exc)
+            zip_path.unlink(missing_ok=True)
             return None
 
     # ── Delete ────────────────────────────────────────────────────────────────

@@ -1,0 +1,21 @@
+{
+    "name": "Fairuz (فيروز)",
+    "description": "Lebanese legendary singer – AI voice model (RVC v2, 200 epochs)",
+    "icon": "🎤",
+    "pitch_shift": 0.0,
+    "formant_shift": 0.0,
+    "reverb_level": 0.05,
+    "noise_gate_threshold": -50,
+    "gain": 1.0,
+    "voice_disguise": 0.0,
+    "accent_dialect": "none",
+    "accent_intensity": 0.0,
+    "use_ai": true,
+    "ai_model_path": "models/fairuz.pth",
+    "ai_index_rate": 0.75,
+    "ai_pitch_shift": 0,
+    "ai_f0_method": "rmvpe",
+    "ai_protect": 0.33,
+    "ai_filter_radius": 3,
+    "tags": ["arabic", "female", "singer", "lebanese", "ai"]
+}
