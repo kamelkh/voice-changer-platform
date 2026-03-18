@@ -7,6 +7,7 @@ the full lifecycle: start, stop, pause, and monitoring.
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 import time
 from typing import Optional
@@ -91,8 +92,10 @@ class AudioStream:
 
         # Dedicated processing thread + input queue (decouples capture ↔ process
         # so the PortAudio callback is never blocked by heavy DSP work).
-        # maxsize=8 keeps maximum queue-induced latency ≤ 8 × chunk_ms.
-        self._proc_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=8)
+        # maxsize=16: absorbs scheduling jitter (~340 ms at 1024/48 kHz)
+        # without producing noticeable latency in normal operation.
+        self._proc_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=16)
+        self._drop_count: int = 0   # total chunks dropped (logged periodically)
         self._proc_thread: Optional[threading.Thread] = None
 
         # Monitor callback (for live preview through headphones)
@@ -150,6 +153,16 @@ class AudioStream:
 
         self._capture.add_callback(self._on_audio_chunk)
         self._output.start()
+
+        # Pre-fill the output queue with a couple of silence frames so the
+        # PortAudio callback never starves during the first few milliseconds
+        # before the processing thread produces its first chunk.
+        _silence_frame = np.zeros(
+            (self.chunk_size, self.channels), dtype=np.float32
+        )
+        for _ in range(3):
+            self._output.write(_silence_frame)
+
         self._capture.start()
         self._running = True
         self._paused = False
@@ -238,10 +251,18 @@ class AudioStream:
         try:
             self._proc_queue.put_nowait(chunk)
         except queue.Full:
-            # Drop the oldest chunk to make room for the new one
+            # Queue is full — processing is slower than capture.
+            # Drop the OLDEST chunk (keep the newest for minimum latency).
             try:
                 self._proc_queue.get_nowait()
                 self._proc_queue.put_nowait(chunk)
+                self._drop_count += 1
+                if self._drop_count % 50 == 1:
+                    logger.warning(
+                        "[STREAM] Processing can't keep up — %d chunks dropped "
+                        "(increase chunk_size or reduce active effects).",
+                        self._drop_count,
+                    )
             except queue.Empty:
                 pass
 
@@ -266,6 +287,11 @@ class AudioStream:
 
     def _processing_loop(self) -> None:
         """Dedicated thread: dequeue → process → write to output."""
+        # Reduce the GIL switch interval from the default 5 ms to 1 ms so
+        # this thread gets CPU time more frequently — critical for real-time
+        # audio where each chunk has only ~21 ms budget.
+        sys.setswitchinterval(0.001)
+
         while self._running:
             try:
                 chunk = self._proc_queue.get(timeout=0.5)
