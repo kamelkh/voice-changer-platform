@@ -160,19 +160,12 @@ class AudioPipeline:
             result = np.clip(result * scale, -1.0, 1.0).astype(np.float32)
 
         # ── Cross-fade with previous chunk tail ────────────────────────
-        # Smooths out any discontinuity at chunk boundaries, removing the
-        # robotic / clicky artefacts caused by per-chunk FFT processing.
+        # With proper per-effect state (OLS / STFT-WOLA), output is
+        # already continuous across chunk boundaries.  A legacy cross-
+        # fade would re-introduce artefacts by blending differently-
+        # scaled regions (especially after RMS normalisation).
+        # Keeping _prev_tail only as a diagnostic hook.
         xf = self._XFADE_LEN
-        if self._prev_tail is not None and len(result) > xf:
-            fade_in = np.linspace(0.0, 1.0, xf, dtype=np.float32)
-            # Reshape fade to (xf, 1) when result is 2-D so broadcasting
-            # works correctly instead of producing (xf, xf).
-            if result.ndim == 2:
-                fade_in = fade_in[:, np.newaxis]
-            prev = self._prev_tail
-            if prev.ndim != result.ndim:
-                prev = prev.reshape(result[:xf].shape)
-            result[:xf] = result[:xf] * fade_in + prev * (1.0 - fade_in)
         if len(result) > xf:
             self._prev_tail = result[-xf:].copy()
 

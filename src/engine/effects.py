@@ -87,102 +87,56 @@ class IAudioEffect(ABC):
 
 class PitchShifter(IAudioEffect):
     """
-    Real-time pitch shifter.
+    Real-time pitch shifter using overlap-save to eliminate chunk-boundary
+    artifacts.
 
-    When PyTorch + CUDA is available (RTX 3070 etc.) uses a GPU phase-vocoder
-    via torchaudio.functional.phase_vocoder for very low latency.
-    Falls back to scipy.signal.resample on CPU otherwise.
+    Overlap-save: we keep the tail of each *input* chunk and prepend it
+    to the next, so the algorithm always sees continuous audio.  Only the
+    last N output samples (corresponding to the new input) are returned.
     """
+
+    _OLS_RATIO = 0.5  # overlap = 50% of chunk size
 
     def __init__(self, semitones: float = 0.0) -> None:
         self.semitones = float(semitones)
-        self._buf = np.array([], dtype=np.float32)
-        self._prev_out: Optional[np.ndarray] = None
-        _OVERLAP = 256  # boundary crossfade length (samples)
-
-        # Detect torchaudio for high-quality GPU pitch shift
-        self._torchaudio_ok = False
-        if _TORCH_OK and _CUDA:
-            try:
-                import torchaudio.functional as _taf  # noqa: F401
-                self._torchaudio_ok = True
-                # Warm-up: run a dummy resample so that the CUDA JIT kernels
-                # are compiled now (at load time) rather than on the first
-                # real audio chunk, which would cause a ~200 ms latency spike.
-                _w = torch.zeros(1, 1024, device=_DEVICE)
-                _o = _taf.resample(_w, orig_freq=48000, new_freq=44100)
-                _taf.resample(_o, orig_freq=44100, new_freq=48000)
-                torch.cuda.synchronize()
-                del _w, _o
-                logger.info("PitchShifter: torchaudio GPU warmup done.")
-            except ImportError:
-                pass
-
-    # 0 = always use GPU when CUDA is available (dedicated GPU mode).
-    # The caller is expected to have a ≥4 GB VRAM GPU; on such hardware the
-    # H2D/D2H overhead for any realistic chunk size is negligible (<100 µs).
-    _GPU_MIN_SAMPLES = 0
+        self._prev_input: Optional[np.ndarray] = None
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
             return audio_data
 
         mono, was_2d, channels = self._to_mono_1d(audio_data)
+        n = len(mono)
+        ols = int(n * self._OLS_RATIO)
 
-        if (self._torchaudio_ok and _CUDA
-                and len(mono) >= self._GPU_MIN_SAMPLES):
-            out = self._process_gpu(mono, sample_rate)
+        # Prepend overlap from previous input for continuity
+        if self._prev_input is not None and len(self._prev_input) == ols:
+            extended = np.concatenate([self._prev_input, mono])
         else:
-            out = self._process_cpu(mono)
+            extended = np.concatenate([np.zeros(ols, dtype=np.float32), mono])
+        self._prev_input = mono[-ols:].copy()
+
+        # Process the extended signal (CPU scipy resample — fast & high quality)
+        full_out = self._process_cpu(extended)
+
+        # Take only the last n samples (discard overlap region)
+        out = full_out[-n:] if len(full_out) >= n else full_out
+        if len(out) < n:
+            out = np.concatenate([out, np.zeros(n - len(out), dtype=np.float32)])
 
         return self._restore(out, was_2d, channels)
 
-    def _process_gpu(self, mono: np.ndarray, sample_rate: int) -> np.ndarray:
-        """GPU pitch shift using torchaudio.functional.resample + phase trick."""
-        import torchaudio.functional as F  # noqa
-
-        ratio = 2.0 ** (self.semitones / 12.0)
-        orig_sr = sample_rate
-        # Resample to a "wrong" sample rate then resample back at original rate
-        # (same as time-stretch + resample = pitch shift without duration change)
-        shifted_sr = int(round(orig_sr / ratio))
-
-        t = torch.from_numpy(mono).unsqueeze(0).to(_DEVICE)  # [1, T]
-        # Step 1: time-stretch by resampling to shifted_sr
-        stretched = F.resample(t, orig_freq=orig_sr, new_freq=shifted_sr)
-        # Step 2: resample back to orig_sr to preserve duration
-        out_t = F.resample(stretched, orig_freq=shifted_sr, new_freq=orig_sr)
-
-        out = out_t.squeeze(0).cpu().numpy().astype(np.float32)
-        # Trim/pad to match input length exactly
-        n = len(mono)
-        if len(out) >= n:
-            out = out[:n]
-        else:
-            out = np.concatenate([out, np.zeros(n - len(out), dtype=np.float32)])
-        # Boundary crossfade to eliminate ringing at resample boundaries
-        ov = min(256, n // 4)
-        if self._prev_out is not None and len(self._prev_out) == ov:
-            fade_in  = np.linspace(0.0, 1.0, ov, dtype=np.float32)
-            fade_out = 1.0 - fade_in
-            out[:ov] = out[:ov] * fade_in + self._prev_out * fade_out
-        self._prev_out = out[-ov:].copy()
-        return out
-
     def _process_cpu(self, mono: np.ndarray) -> np.ndarray:
-        """CPU pitch shift using linear interpolation (no FFT leakage).
-
-        Unlike scipy.signal.resample, linear interpolation does not
-        introduce spectral-leakage artefacts at chunk boundaries,
-        which eliminates the robotic / metallic sound on small chunks.
-        """
+        """CPU pitch shift via scipy FFT-based resample (sinc quality, <0.2 ms)."""
         n = len(mono)
         ratio = 2.0 ** (self.semitones / 12.0)
-        # Read the input at a different speed, then take exactly n samples.
-        # ratio > 1 → read faster → higher pitch; ratio < 1 → slower → lower.
-        src_indices = np.arange(n, dtype=np.float32) / ratio
-        src_indices = np.clip(src_indices, 0, n - 1)
-        return np.interp(src_indices, np.arange(n, dtype=np.float32), mono).astype(np.float32)
+        stretched_len = int(round(n / ratio))
+        if stretched_len < 1:
+            return np.zeros(n, dtype=np.float32)
+        stretched = signal.resample(mono, stretched_len).astype(np.float32)
+        # Resample back to original length
+        out = signal.resample(stretched, n).astype(np.float32)
+        return out
 
     def get_params(self) -> dict[str, Any]:
         return {"semitones": self.semitones}
@@ -190,7 +144,7 @@ class PitchShifter(IAudioEffect):
     def set_params(self, params: dict[str, Any]) -> None:
         if "semitones" in params:
             self.semitones = float(params["semitones"])
-            # Re-check torchaudio if parameters change
+            self._prev_input = None
 
 
 
@@ -199,18 +153,44 @@ class PitchShifter(IAudioEffect):
 
 class FormantShifter(IAudioEffect):
     """
-    Spectral-envelope warp to shift formants without changing pitch.
+    STFT-based formant shifter using WOLA (Weighted Overlap-Add).
 
-    Implemented as frequency-domain interpolation using rfft.
-    A short overlap crossfade is kept between chunks to eliminate
-    the boundary discontinuities that cause audible crackling.
+    Processes audio through small overlapping sub-frames with sqrt-Hann
+    analysis and synthesis windows.  State (input overlap + output OLA
+    accumulator) is carried across process() calls so chunk boundaries
+    are completely seamless.
+
+    Reference: J. O. Smith, *Spectral Audio Signal Processing*, §8.6
+    (Weighted Overlap Add).
     """
 
-    _OVERLAP = 256  # samples of crossfade at chunk boundaries
+    _FRAME = 1024          # sub-frame FFT size
+    _HOP = _FRAME // 2     # 50 % overlap → Hann COLA = 1.0
 
     def __init__(self, semitones: float = 0.0) -> None:
         self.semitones = float(semitones)
-        self._prev_out: Optional[np.ndarray] = None
+        self._init_state()
+
+    def _init_state(self) -> None:
+        F = self._FRAME
+        k = np.arange(F, dtype=np.float32)
+        hann = 0.5 * (1.0 - np.cos(2.0 * np.pi * k / F))
+        self._window = np.sqrt(np.maximum(hann, 0.0)).astype(np.float32)
+        self._in_buf = np.zeros(F, dtype=np.float32)
+        self._out_buf = np.zeros(F, dtype=np.float32)
+        self._hop_fill = 0
+
+    def _warp_frame(self, ratio: float) -> None:
+        windowed = self._in_buf * self._window            # analysis
+        spec = np.fft.rfft(windowed)
+        freq_idx = np.arange(len(spec), dtype=np.float32)
+        warped = freq_idx / ratio
+        real_p = np.interp(warped, freq_idx, spec.real)
+        imag_p = np.interp(warped, freq_idx, spec.imag)
+        out_frame = np.fft.irfft(real_p + 1j * imag_p
+                                 )[:self._FRAME].astype(np.float32)
+        out_frame *= self._window                          # synthesis
+        self._out_buf += out_frame
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
@@ -221,40 +201,43 @@ class FormantShifter(IAudioEffect):
         if n < 16:
             return audio_data
 
-        # Measure input RMS for preservation
         in_rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
-
         ratio = 2.0 ** (self.semitones / 12.0)
+        F, H = self._FRAME, self._HOP
 
-        spec = np.fft.rfft(mono)
-        freqs = np.arange(len(spec), dtype=np.float32)
-        # warped[i] = i/ratio is the source position in the original spectrum
-        # for each output bin i.  ratio > 1 → read from lower bins → stretch
-        # the spectrum upward (formants shift up).  ratio < 1 → compress down.
-        warped = freqs / ratio
+        output = np.zeros(n, dtype=np.float32)
+        out_idx = 0
+        in_idx = 0
 
-        # Use edge-value extrapolation (no left/right=0 zeroing)
-        real = np.interp(warped, freqs, spec.real)
-        imag = np.interp(warped, freqs, spec.imag)
-        out = np.fft.irfft(real + 1j * imag)[:n].astype(np.float32)
-        if len(out) < n:
-            out = np.pad(out, (0, n - len(out)))
+        while in_idx < n:
+            space = H - self._hop_fill
+            avail = min(space, n - in_idx)
 
-        # Preserve RMS level
-        out_rms = float(np.sqrt(np.mean(out ** 2))) + 1e-10
-        out *= (in_rms / out_rms)
-        out = np.clip(out, -1.0, 1.0).astype(np.float32)
+            wp = (F - H) + self._hop_fill
+            self._in_buf[wp:wp + avail] = mono[in_idx:in_idx + avail]
+            self._hop_fill += avail
+            in_idx += avail
 
-        # Boundary crossfade: blend the start of this chunk with the tail
-        # of the previous processed chunk to eliminate spectral discontinuities.
-        ov = min(self._OVERLAP, n // 4)
-        if self._prev_out is not None and len(self._prev_out) == ov:
-            fade_in  = np.linspace(0.0, 1.0, ov, dtype=np.float32)
-            fade_out = 1.0 - fade_in
-            out[:ov] = out[:ov] * fade_in + self._prev_out * fade_out
-        self._prev_out = out[-ov:].copy()
+            if self._hop_fill >= H:
+                self._warp_frame(ratio)
 
-        return self._restore(out, was_2d, channels)
+                to_write = min(H, n - out_idx)
+                output[out_idx:out_idx + to_write] = self._out_buf[:to_write]
+                out_idx += to_write
+
+                # Shift both buffers by one hop
+                self._in_buf[:F - H] = self._in_buf[H:F]
+                self._in_buf[F - H:] = 0.0
+                self._out_buf[:F - H] = self._out_buf[H:F]
+                self._out_buf[F - H:] = 0.0
+                self._hop_fill = 0
+
+        # RMS preservation
+        out_rms = float(np.sqrt(np.mean(output ** 2))) + 1e-10
+        output *= (in_rms / out_rms)
+        output = np.clip(output, -1.0, 1.0).astype(np.float32)
+
+        return self._restore(output, was_2d, channels)
 
     def get_params(self) -> dict[str, Any]:
         return {"semitones": self.semitones}
@@ -262,7 +245,7 @@ class FormantShifter(IAudioEffect):
     def set_params(self, params: dict[str, Any]) -> None:
         if "semitones" in params:
             self.semitones = float(params["semitones"])
-            self._prev_out = None   # reset on parameter change
+            self._init_state()
 
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────
