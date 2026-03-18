@@ -7,3 +7,8 @@ build/
 *.spec
 *.egg-info/
 .env
+
+# Large binary files (download separately / use Git LFS)
+models/*.pth
+models/*.index
+*.wav
