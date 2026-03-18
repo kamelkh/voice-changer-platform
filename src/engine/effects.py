@@ -102,14 +102,26 @@ class PitchShifter(IAudioEffect):
         self._torchaudio_ok = False
         if _TORCH_OK and _CUDA:
             try:
-                import torchaudio  # noqa: F401
+                import torchaudio.functional as _taf  # noqa: F401
                 self._torchaudio_ok = True
+                # Warm-up: run a dummy resample so that the CUDA JIT kernels
+                # are compiled now (at load time) rather than on the first
+                # real audio chunk, which would cause a ~200 ms latency spike.
+                _w = torch.zeros(1, 1024, device=_DEVICE)
+                _o = _taf.resample(_w, orig_freq=48000, new_freq=44100)
+                _taf.resample(_o, orig_freq=44100, new_freq=48000)
+                torch.cuda.synchronize()
+                del _w, _o
+                logger.info("PitchShifter: torchaudio GPU warmup done.")
             except ImportError:
                 pass
 
-    # GPU is only beneficial for chunks >= 4096 samples.
-    # Below that the CUDA kernel-launch + CPU↔GPU copy overhead dominates.
-    _GPU_MIN_SAMPLES = 4096
+    # On a modern GPU (≥4 GB VRAM, PCIe 3/4) the CUDA kernel-launch + H2D/D2H
+    # transfer for 1024 float32 samples takes ~50–100 µs, while the CPU
+    # linear-interpolation path takes ~150–400 µs.  GPU also gives higher
+    # quality (torchaudio sinc resampler vs. np.interp).
+    # Keep at 1024 to match DEFAULT_CHUNK_SIZE; raise if on very old hardware.
+    _GPU_MIN_SAMPLES = 1024
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
