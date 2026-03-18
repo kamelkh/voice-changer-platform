@@ -116,12 +116,10 @@ class PitchShifter(IAudioEffect):
             except ImportError:
                 pass
 
-    # On a modern GPU (≥4 GB VRAM, PCIe 3/4) the CUDA kernel-launch + H2D/D2H
-    # transfer for 1024 float32 samples takes ~50–100 µs, while the CPU
-    # linear-interpolation path takes ~150–400 µs.  GPU also gives higher
-    # quality (torchaudio sinc resampler vs. np.interp).
-    # Keep at 1024 to match DEFAULT_CHUNK_SIZE; raise if on very old hardware.
-    _GPU_MIN_SAMPLES = 1024
+    # 0 = always use GPU when CUDA is available (dedicated GPU mode).
+    # The caller is expected to have a ≥4 GB VRAM GPU; on such hardware the
+    # H2D/D2H overhead for any realistic chunk size is negligible (<100 µs).
+    _GPU_MIN_SAMPLES = 0
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
@@ -626,9 +624,8 @@ class AccentEffect(IAudioEffect):
         },
     }
 
-    # GPU is only worth it when CUDA kernel-launch overhead is amortised
-    # over enough samples (FFT size ≥ 1024).
-    _GPU_MIN_SAMPLES: int = 1024
+    # 0 = always use GPU when CUDA is available (dedicated GPU mode).
+    _GPU_MIN_SAMPLES: int = 0
 
     def __init__(self, dialect: str = "palestinian",
                  intensity: float = 0.5) -> None:
