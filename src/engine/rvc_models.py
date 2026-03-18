@@ -205,6 +205,7 @@ class TextEncoder768(nn.Module):
 
         self.emb_phone = nn.Linear(768, hidden_channels)
         self.emb_pitch = nn.Embedding(256, hidden_channels)
+        self.lrelu = nn.LeakyReLU(0.1, inplace=True)
 
         self.encoder = Encoder(
             hidden_channels, filter_channels, n_heads, n_layers,
@@ -223,6 +224,8 @@ class TextEncoder768(nn.Module):
             m, logs, x_mask
         """
         x = self.emb_phone(phone) + self.emb_pitch(pitch)
+        x = x * math.sqrt(self.hidden_channels)
+        x = self.lrelu(x)
         x = x.transpose(1, 2)  # (B, C, T)
 
         x_mask = torch.ones(x.size(0), 1, x.size(2), device=x.device, dtype=x.dtype)
@@ -381,7 +384,7 @@ class SourceModuleHnNSF(nn.Module):
         self.harmonic_num = harmonic_num
 
         self.l_linear = nn.Linear(harmonic_num + 1, 1)
-        self.l_linear.weight.data.zero_()
+        self.l_tanh = nn.Tanh()
 
     def forward(self, f0: torch.Tensor, upp: int) -> torch.Tensor:
         """
@@ -403,24 +406,25 @@ class SourceModuleHnNSF(nn.Module):
             phase = torch.cumsum(rad, dim=1) * 2 * math.pi
             sine_waves = torch.sin(phase) * self.sine_amp  # (B, T*upp, 1)
 
-            # Zero out unvoiced regions
-            voiced_mask = (f0_up > 1.0).float()
-            sine_waves = sine_waves * voiced_mask
+            # UV mask: 1 for voiced, 0 for unvoiced
+            uv = (f0_up > 1.0).float()
 
             # Add harmonics
             if self.harmonic_num > 0:
                 harmonics = []
                 for k in range(1, self.harmonic_num + 1):
                     h_phase = torch.cumsum(rad * (k + 1), dim=1) * 2 * math.pi
-                    harmonics.append(torch.sin(h_phase) * self.sine_amp * voiced_mask)
+                    harmonics.append(torch.sin(h_phase) * self.sine_amp)
                 sine_waves = torch.cat([sine_waves] + harmonics, dim=-1)
 
-            # Add noise
-            noise = torch.randn_like(sine_waves[:, :, :1]) * self.noise_std
+            # Blend: voiced regions get sine, unvoiced get noise
+            noise_amp = uv * self.noise_std + (1 - uv) * self.sine_amp / 3
+            noise = noise_amp * torch.randn_like(sine_waves)
+            sine_waves = sine_waves * uv + noise
 
-        # Mix through learnable linear
-        sine_waves = sine_waves.float()
-        har_source = self.l_linear(sine_waves)  # (B, T*upp, 1)
+        # Mix through learnable linear + tanh
+        sine_waves = sine_waves.to(dtype=self.l_linear.weight.dtype)
+        har_source = self.l_tanh(self.l_linear(sine_waves))  # (B, T*upp, 1)
 
         return har_source.transpose(1, 2)  # (B, 1, T*upp)
 
@@ -617,8 +621,8 @@ class SynthesizerTrnMs768NSFsid(nn.Module):
 
         m_p, logs_p, x_mask = self.enc_p(phone, pitch, phone_lengths)
 
-        # Deterministic: z = m_p
-        z_p = m_p
+        # Sample z_p from prior (mu + noise * sigma * 0.66666)
+        z_p = (m_p + torch.exp(logs_p) * torch.randn_like(m_p) * 0.66666) * x_mask
 
         # Reverse flow
         z = self.flow(z_p, x_mask, g=g, reverse=True)

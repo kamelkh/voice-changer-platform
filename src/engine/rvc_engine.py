@@ -85,6 +85,7 @@ class RVCEngine:
         self._net_g = None        # SynthesizerTrnMs768NSFsid
         self._cpt: Optional[dict] = None
         self._index = None        # FAISS index
+        self._big_npy = None      # Pre-reconstructed FAISS vectors
         self._hubert_model = None # HuBERT feature extractor
         self._hubert_processor = None
 
@@ -149,6 +150,7 @@ class RVCEngine:
         """Release the loaded model and free GPU memory."""
         self._net_g = None
         self._index = None
+        self._big_npy = None
         self._cpt = None
         self._model_loaded = False
         self._model_path = None
@@ -241,6 +243,7 @@ class RVCEngine:
     def _convert_block(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
         """Run the full RVC conversion pipeline on a block of audio."""
         import torch
+        import torch.nn.functional as F_t
         import torchaudio.functional as AF
 
         orig_len = len(audio)
@@ -253,32 +256,49 @@ class RVCEngine:
         else:
             mono_16k = audio
 
-        # 2. Extract HuBERT features (768-dim)
-        feats = self._extract_features(mono_16k)
+        # 1b. High-pass filter full audio (matches reference pipeline)
+        from scipy.signal import butter, filtfilt
+        bh, ah = butter(N=5, Wn=48, btype="high", fs=16000)
+        mono_16k = filtfilt(bh, ah, mono_16k).astype(np.float32)
+
+        # 1c. Reflection-pad for boundary quality (reference: x_pad=3 → 48000)
+        pad_16k = self._HUBERT_SR  # 1 second pad
+        mono_16k_padded = np.pad(mono_16k, (pad_16k, pad_16k), mode="reflect")
+
+        # 2. Extract HuBERT features (768-dim) — output at 50 fps
+        feats = self._extract_features(mono_16k_padded, apply_hp=False)
         if feats is None:
             return audio
 
-        n_frames = feats.shape[1]
+        # 3. Upsample features 2× to match model frame rate (100 fps)
+        #    Reference: F.interpolate(feats.permute(0,2,1), scale_factor=2)
+        feats_t = torch.from_numpy(feats).permute(0, 2, 1)  # (1, 768, T)
+        feats_t = F_t.interpolate(feats_t, scale_factor=2, mode='nearest')
+        feats = feats_t.permute(0, 2, 1).numpy()  # (1, T*2, 768)
 
-        # 3. Extract F0
-        f0 = self._extract_f0(mono_16k, self._HUBERT_SR, n_frames)
+        # p_len: number of frames at 100 fps (window=160 at 16 kHz)
+        p_len = feats.shape[1]
+
+        # 4. Extract F0 at 100 fps (natural frame_period=10 ms resolution)
+        f0 = self._extract_f0(mono_16k_padded, self._HUBERT_SR, p_len)
         pitch = self._f0_to_pitch_index(f0)
 
-        # 4. Feature retrieval
+        # 5. Feature retrieval (save original for protect)
+        feats0 = feats.copy() if self.protect < 0.5 else None
         if self._index is not None and self.index_rate > 0:
             feats = self._index_retrieval(feats)
 
-        # 5. Consonant protection
-        if self.protect < 0.5:
-            feats = self._apply_protect(feats, f0)
+        # 6. Consonant protection — blend back original feats in unvoiced regions
+        if self.protect < 0.5 and feats0 is not None:
+            feats = self._apply_protect(feats, feats0, f0)
 
-        # 6. Run generator
+        # 7. Run generator
         with torch.no_grad():
             phone_t = torch.from_numpy(feats).to(self._device)
             pitch_t = torch.from_numpy(pitch).long().to(self._device)
             pitchf_t = torch.from_numpy(f0).float().to(self._device)
             sid_t = torch.tensor([0], device=self._device)
-            lengths_t = torch.tensor([n_frames], device=self._device)
+            lengths_t = torch.tensor([p_len], device=self._device)
 
             audio_out = self._net_g(
                 phone_t, lengths_t, pitch_t, pitchf_t, sid_t
@@ -286,13 +306,18 @@ class RVCEngine:
 
         audio_out = audio_out.squeeze().cpu().numpy().astype(np.float32)
 
-        # 7. Resample back to original sample rate
+        # 8. Resample back to original sample rate
         if sample_rate != self._model_sr:
             t_out = torch.from_numpy(audio_out).unsqueeze(0)
             t_out = AF.resample(t_out, self._model_sr, sample_rate)
             audio_out = t_out.squeeze(0).numpy()
 
-        # 8. Match original length
+        # 9. Trim padding from output
+        pad_out = int(pad_16k * sample_rate / self._HUBERT_SR)
+        if len(audio_out) > pad_out * 2:
+            audio_out = audio_out[pad_out:-pad_out]
+
+        # 10. Match original length
         if len(audio_out) >= orig_len:
             return audio_out[:orig_len]
         return np.pad(audio_out, (0, orig_len - len(audio_out)))
@@ -300,16 +325,35 @@ class RVCEngine:
     # ── Private: feature extraction ───────────────────────────────────────────
 
     def _load_hubert(self) -> None:
-        """Load HuBERT from HuggingFace transformers."""
+        """Load contentvec HuBERT model used by RVC training."""
         if self._hubert_model is not None:
             return  # already loaded
 
         try:
             import torch
             from transformers import HubertModel
+            from huggingface_hub import hf_hub_download
 
-            logger.info("Loading HuBERT model (facebook/hubert-base-ls960) …")
-            model = HubertModel.from_pretrained("facebook/hubert-base-ls960")
+            # contentvec768l12 — the fine-tuned HuBERT used to train RVC models
+            model_id = "lengyue233/content-vec-best"
+            logger.info("Loading contentvec HuBERT (%s) …", model_id)
+            model = HubertModel.from_pretrained(model_id)
+
+            # Fix: weight_norm format changed in newer PyTorch.
+            # The checkpoint has weight_g/weight_v but the model expects
+            # parametrizations.weight.original0/original1.  Load them manually.
+            raw_path = hf_hub_download(model_id, "pytorch_model.bin")
+            raw_sd = torch.load(raw_path, map_location="cpu", weights_only=True)
+            conv = model.encoder.pos_conv_embed.conv
+            if hasattr(conv, "parametrizations"):
+                wg = raw_sd.get("encoder.pos_conv_embed.conv.weight_g")
+                wv = raw_sd.get("encoder.pos_conv_embed.conv.weight_v")
+                if wg is not None and wv is not None:
+                    conv.parametrizations.weight.original0.data.copy_(wg)
+                    conv.parametrizations.weight.original1.data.copy_(wv)
+                    logger.info("Fixed pos_conv_embed weight_norm weights.")
+            del raw_sd
+
             model.eval()
             model.to(self._device)
             self._hubert_model = model
@@ -317,22 +361,25 @@ class RVCEngine:
         except Exception as exc:
             logger.error("Failed to load HuBERT: %s", exc)
 
-    def _extract_features(self, audio_16k: np.ndarray) -> Optional[np.ndarray]:
+    def _extract_features(self, audio_16k: np.ndarray,
+                          apply_hp: bool = True) -> Optional[np.ndarray]:
         """Extract 768-dim HuBERT features.  Returns (1, T, 768) ndarray."""
         try:
             import torch
 
             if self._hubert_model is None:
-                # Fallback: return zero features (will still produce sound,
-                # just not voice-converted)
                 n_frames = max(1, len(audio_16k) // self._HUBERT_HOP)
                 logger.warning("HuBERT not loaded — using zero features.")
                 return np.zeros((1, n_frames, 768), dtype=np.float32)
 
+            if apply_hp:
+                from scipy.signal import butter, lfilter
+                bh, ah = butter(N=5, Wn=48, btype="high", fs=16000)
+                audio_16k = lfilter(bh, ah, audio_16k).astype(np.float32)
+
             with torch.no_grad():
                 t = torch.from_numpy(audio_16k).unsqueeze(0).float().to(self._device)
                 out = self._hubert_model(t, output_hidden_states=True)
-                # Use last hidden state (standard for RVC v2)
                 feats = out.last_hidden_state  # (1, T, 768)
 
             return feats.cpu().numpy().astype(np.float32)
@@ -381,16 +428,26 @@ class RVCEngine:
     @staticmethod
     def _f0_to_pitch_index(f0: np.ndarray) -> np.ndarray:
         """Convert continuous F0 (Hz) to pitch embedding index (0–255).
-        Uses MIDI-style mapping: index = 69 + 12*log2(f0/440).
-        Unvoiced (f0<=0) maps to 0.  Returns (1, T) int array."""
-        f0_flat = f0.flatten()
-        pitch = np.zeros_like(f0_flat, dtype=np.int64)
-        voiced = f0_flat > 1.0
-        pitch[voiced] = np.clip(
-            np.round(69 + 12 * np.log2(f0_flat[voiced] / 440.0)).astype(np.int64),
+
+        Uses mel-scale mapping matching the RVC reference:
+          f0_mel = 1127 * log(1 + f0/700)
+          index  = (f0_mel - mel_min) * 254 / (mel_max - mel_min) + 1
+        Unvoiced (f0<=0) maps to 1.  Returns (1, T) int array.
+        """
+        f0_mel_min = 1127 * np.log(1 + 50.0 / 700)     # ~f0_floor  50 Hz
+        f0_mel_max = 1127 * np.log(1 + 1100.0 / 700)    # ~f0_ceil 1100 Hz
+
+        f0_flat = f0.flatten().copy()
+        f0_mel = 1127.0 * np.log(1 + f0_flat / 700.0)
+        idx = np.ones_like(f0_flat, dtype=np.int64)
+        voiced = f0_mel > 0
+        idx[voiced] = np.clip(
+            np.round(
+                (f0_mel[voiced] - f0_mel_min) * 254.0 / (f0_mel_max - f0_mel_min) + 1
+            ).astype(np.int64),
             1, 255,
         )
-        return pitch.reshape(f0.shape)
+        return idx.reshape(f0.shape)
 
     # ── Private: FAISS index retrieval ────────────────────────────────────────
 
@@ -420,6 +477,8 @@ class RVCEngine:
             import faiss
             self._index = faiss.read_index(str(index_path))
             self._index_path = index_path
+            # Pre-reconstruct all vectors for fast retrieval (matches reference)
+            self._big_npy = self._index.reconstruct_n(0, self._index.ntotal)
             logger.info("FAISS index loaded: %s (%d vectors)",
                         index_path.name, self._index.ntotal)
         except ImportError:
@@ -428,42 +487,54 @@ class RVCEngine:
             logger.warning("Failed to load FAISS index: %s", exc)
 
     def _index_retrieval(self, feats: np.ndarray) -> np.ndarray:
-        """Blend HuBERT features with FAISS nearest-neighbour features."""
-        if self._index is None:
+        """Blend HuBERT features with FAISS nearest-neighbour features.
+
+        Uses k=8 neighbours with inverse-distance-squared weighting,
+        matching the reference RVC pipeline.
+        """
+        if self._index is None or self._big_npy is None:
             return feats
 
         try:
-            feats_flat = feats.reshape(-1, feats.shape[-1]).copy()
-            # Normalize for cosine similarity
-            norms = np.linalg.norm(feats_flat, axis=1, keepdims=True)
-            norms = np.maximum(norms, 1e-8)
-            feats_norm = feats_flat / norms
+            npy = feats[0].copy()  # (T, 768)
 
-            # Search
-            _, I = self._index.search(feats_norm, 8)  # 8 nearest
+            score, ix = self._index.search(npy, k=8)
 
-            # Average retrieved features
-            # (FAISS index stores the training features internally)
-            # For IVF+Flat, we can reconstruct — but for simplicity,
-            # blend the query with retrieved proportionally
-            # In practice the index_rate controls how much retrieval matters
-            # Since direct reconstruction requires IVF support, just keep the
-            # original features scaled by (1 - index_rate) for now.
-            # Full feature retrieval would require storing the feature bank.
-            return feats
+            # Inverse-distance-squared weighting
+            weight = np.square(1.0 / np.maximum(score, 1e-6))
+            weight /= weight.sum(axis=1, keepdims=True)
+
+            # Weighted combination of retrieved vectors
+            npy_retrieved = np.sum(
+                self._big_npy[ix] * np.expand_dims(weight, axis=2),
+                axis=1,
+            )
+
+            # Blend with original features
+            blended = (
+                npy_retrieved * self.index_rate
+                + npy * (1 - self.index_rate)
+            )
+
+            return blended.reshape(feats.shape).astype(np.float32)
 
         except Exception as exc:
             logger.warning("Index retrieval failed: %s", exc)
             return feats
 
-    def _apply_protect(self, feats: np.ndarray, f0: np.ndarray) -> np.ndarray:
-        """Reduce feature magnitude in unvoiced regions to protect consonants."""
-        voiced = (f0.flatten() > 1.0).astype(np.float32)
-        protect_factor = 1.0 - self.protect
-        # Where unvoiced, reduce features
-        mask = voiced + (1.0 - voiced) * protect_factor
-        feats = feats * mask.reshape(1, -1, 1)
-        return feats
+    def _apply_protect(self, feats: np.ndarray, feats0: np.ndarray,
+                       f0: np.ndarray) -> np.ndarray:
+        """Protect consonants by blending original features in unvoiced regions.
+
+        Matches the reference RVC pipeline: voiced regions keep the
+        retrieval-modified features, unvoiced regions blend back to original.
+        """
+        pitchff = f0.flatten().copy()
+        pitchff[pitchff > 0] = 1.0
+        pitchff[pitchff < 1] = self.protect
+        pitchff = pitchff.reshape(1, -1, 1)  # (1, T, 1)
+        feats = feats * pitchff + feats0 * (1.0 - pitchff)
+        return feats.astype(np.float32)
 
     # ── Parameter updates ─────────────────────────────────────────────────────
 
