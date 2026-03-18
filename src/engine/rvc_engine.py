@@ -91,10 +91,15 @@ class RVCEngine:
 
         # Audio buffer for accumulating short chunks before conversion.
         # F0 extraction and HuBERT need ≥0.3 s of context for quality.
-        self._MIN_BUFFER_SAMPLES = 16000  # ~0.33 s at 48 kHz
+        self._MIN_BUFFER_SAMPLES = 4800  # ~0.3 s at 16 kHz
         self._audio_buf: list[np.ndarray] = []
         self._buf_samples: int = 0
         self._output_queue: list[np.ndarray] = []  # pre-converted chunks
+
+        # Output sample rate — when set (by pipeline), the engine resamples
+        # the model output directly to this rate instead of back to the
+        # input rate.  Avoids the lossy input_sr→model_sr→input_sr round-trip.
+        self._output_sr: Optional[int] = None
 
     # ── Model management ──────────────────────────────────────────────────────
 
@@ -184,8 +189,9 @@ class RVCEngine:
         Convert audio through the loaded RVC model.
 
         Buffers short chunks internally and converts when enough audio
-        has accumulated (≥0.33 s) for reliable F0 extraction.  Returns
-        converted audio matched to the input chunk length.
+        has accumulated (≥0.3 s) for reliable F0 extraction.  Returns
+        converted audio matched to the input chunk length (or scaled
+        to ``_output_sr`` when the pipeline has set a target output rate).
         """
         if not self._model_loaded or self._net_g is None:
             return audio_data
@@ -193,16 +199,26 @@ class RVCEngine:
         mono = audio_data.flatten().astype(np.float32)
         chunk_len = len(mono)
 
+        # Determine the actual output rate and corresponding chunk length
+        out_sr = self._output_sr if self._output_sr else sample_rate
+        out_chunk_len = int(round(chunk_len * out_sr / sample_rate)) if out_sr != sample_rate else chunk_len
+
         # Always accumulate incoming audio so nothing is dropped
         self._audio_buf.append(mono)
         self._buf_samples += chunk_len
 
         # If there is pre-converted audio waiting, serve from queue
         if self._output_queue:
-            return self._dequeue_chunk(chunk_len, audio_data.shape)
+            return self._dequeue_chunk(out_chunk_len)
 
-        # Not enough audio yet — pass through unchanged
+        # Not enough audio yet — pass through (resampled to output rate)
         if self._buf_samples < self._MIN_BUFFER_SAMPLES:
+            if out_sr != sample_rate:
+                import torch
+                import torchaudio.functional as AF
+                t = torch.from_numpy(mono).float().unsqueeze(0)
+                t = AF.resample(t, sample_rate, out_sr)
+                return t.squeeze(0).numpy().astype(np.float32)
             return audio_data
 
         # ── Convert the full buffer ───────────────────────────────────
@@ -212,7 +228,7 @@ class RVCEngine:
         self._buf_samples = 0
 
         try:
-            converted = self._convert_block(full_audio, sample_rate)
+            converted = self._convert_block(full_audio, sample_rate, out_sr)
         except Exception as exc:
             logger.error("RVC inference error: %s", exc)
             converted = full_audio
@@ -221,32 +237,35 @@ class RVCEngine:
         offset = 0
         pieces = []
         for _ in range(n_chunks):
-            end = min(offset + chunk_len, len(converted))
+            end = min(offset + out_chunk_len, len(converted))
             piece = converted[offset:end]
-            if len(piece) < chunk_len:
-                piece = np.pad(piece, (0, chunk_len - len(piece)))
+            if len(piece) < out_chunk_len:
+                piece = np.pad(piece, (0, out_chunk_len - len(piece)))
             pieces.append(piece)
-            offset += chunk_len
+            offset += out_chunk_len
 
         # Return first chunk, queue the rest
         self._output_queue.extend(pieces[1:])
-        return pieces[0].reshape(audio_data.shape).astype(np.float32)
+        return pieces[0].astype(np.float32)
 
-    def _dequeue_chunk(self, chunk_len: int, shape) -> np.ndarray:
+    def _dequeue_chunk(self, chunk_len: int) -> np.ndarray:
         """Return one buffered chunk from the output queue."""
         chunk = self._output_queue.pop(0)
         if len(chunk) != chunk_len:
             chunk = chunk[:chunk_len] if len(chunk) > chunk_len else \
                     np.pad(chunk, (0, chunk_len - len(chunk)))
-        return chunk.reshape(shape).astype(np.float32)
+        return chunk.astype(np.float32)
 
-    def _convert_block(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    def _convert_block(self, audio: np.ndarray, sample_rate: int,
+                       output_sample_rate: int) -> np.ndarray:
         """Run the full RVC conversion pipeline on a block of audio."""
         import torch
         import torch.nn.functional as F_t
         import torchaudio.functional as AF
 
         orig_len = len(audio)
+        # Expected output length at the target output rate
+        out_len = int(round(orig_len * output_sample_rate / sample_rate)) if output_sample_rate != sample_rate else orig_len
 
         # 1. Resample to 16 kHz for HuBERT
         if sample_rate != self._HUBERT_SR:
@@ -261,8 +280,8 @@ class RVCEngine:
         bh, ah = butter(N=5, Wn=48, btype="high", fs=16000)
         mono_16k = filtfilt(bh, ah, mono_16k).astype(np.float32)
 
-        # 1c. Reflection-pad for boundary quality (reference: x_pad=3 → 48000)
-        pad_16k = self._HUBERT_SR  # 1 second pad
+        # 1c. Reflection-pad for boundary quality (0.3 s each side)
+        pad_16k = 4800  # 0.3 seconds at 16 kHz
         mono_16k_padded = np.pad(mono_16k, (pad_16k, pad_16k), mode="reflect")
 
         # 2. Extract HuBERT features (768-dim) — output at 50 fps
@@ -306,21 +325,23 @@ class RVCEngine:
 
         audio_out = audio_out.squeeze().cpu().numpy().astype(np.float32)
 
-        # 8. Resample back to original sample rate
-        if sample_rate != self._model_sr:
+        # 8. Trim padding at model sample rate BEFORE resampling
+        #    (Reference trims at tgt_sr before any resample)
+        pad_model = int(pad_16k * self._model_sr / self._HUBERT_SR)
+        if len(audio_out) > pad_model * 2:
+            audio_out = audio_out[pad_model:-pad_model]
+
+        # 9. Resample from model_sr directly to output rate
+        #    (avoids the lossy model_sr→input_sr→output_sr round-trip)
+        if output_sample_rate != self._model_sr:
             t_out = torch.from_numpy(audio_out).unsqueeze(0)
-            t_out = AF.resample(t_out, self._model_sr, sample_rate)
+            t_out = AF.resample(t_out, self._model_sr, output_sample_rate)
             audio_out = t_out.squeeze(0).numpy()
 
-        # 9. Trim padding from output
-        pad_out = int(pad_16k * sample_rate / self._HUBERT_SR)
-        if len(audio_out) > pad_out * 2:
-            audio_out = audio_out[pad_out:-pad_out]
-
-        # 10. Match original length
-        if len(audio_out) >= orig_len:
-            return audio_out[:orig_len]
-        return np.pad(audio_out, (0, orig_len - len(audio_out)))
+        # 10. Match expected output length
+        if len(audio_out) >= out_len:
+            return audio_out[:out_len]
+        return np.pad(audio_out, (0, out_len - len(audio_out)))
 
     # ── Private: feature extraction ───────────────────────────────────────────
 

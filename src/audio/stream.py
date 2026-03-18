@@ -269,19 +269,23 @@ class AudioStream:
     def _write_resampled(self, audio: np.ndarray) -> None:
         """Resample *audio* and split into output-chunk-sized pieces."""
         resampled = self._maybe_resample(audio)
+        self._write_direct(resampled)
+
+    def _write_direct(self, audio: np.ndarray) -> None:
+        """Write audio that is already at the output sample rate."""
         out_cs = self._output.chunk_size
-        n_frames = resampled.shape[0] if resampled.ndim > 1 else len(resampled)
+        n_frames = audio.shape[0] if audio.ndim > 1 else len(audio)
         if n_frames <= out_cs:
-            self._output.write(resampled)
+            self._output.write(audio)
         else:
             for i in range(0, n_frames, out_cs):
-                piece = resampled[i : i + out_cs]
+                piece = audio[i : i + out_cs]
                 self._output.write(piece)
 
-        # Send resampled audio to monitor (headphones preview)
+        # Send audio to monitor (headphones preview)
         if self._monitor_callback is not None:
             try:
-                self._monitor_callback(resampled)
+                self._monitor_callback(audio)
             except Exception as exc:
                 logger.error("Monitor callback error: %s", exc)
 
@@ -291,6 +295,8 @@ class AudioStream:
         # this thread gets CPU time more frequently — critical for real-time
         # audio where each chunk has only ~21 ms budget.
         sys.setswitchinterval(0.001)
+
+        sr_ratio = self.output_sample_rate / self.input_sample_rate if self.input_sample_rate else 1.0
 
         while self._running:
             try:
@@ -308,11 +314,31 @@ class AudioStream:
                 self._write_resampled(silence)
             elif self._processor is not None:
                 try:
-                    processed = self._processor(chunk, self.input_sample_rate)
+                    # Try passing output_sample_rate so the pipeline can
+                    # resample model output directly (avoids lossy round-trip).
+                    try:
+                        processed = self._processor(
+                            chunk, self.input_sample_rate, self.output_sample_rate,
+                        )
+                    except TypeError:
+                        # Legacy processor with 2-arg signature
+                        processed = self._processor(chunk, self.input_sample_rate)
                 except Exception as exc:
                     logger.error("Processor error: %s", exc)
                     processed = chunk
-                self._write_resampled(processed)
+
+                # Detect whether the processor already output at output_sr.
+                # When RVC is active the result is sr_ratio× longer than input.
+                in_len = len(chunk.flatten())
+                out_len = len(processed.flatten())
+                actual_ratio = out_len / max(in_len, 1)
+
+                if sr_ratio > 1.01 and abs(actual_ratio - sr_ratio) / sr_ratio < 0.15:
+                    # Audio is already at output sample rate — write directly
+                    self._write_direct(processed)
+                else:
+                    # Audio is at input sample rate — resample to output
+                    self._write_resampled(processed)
             else:
                 self._write_resampled(chunk)
 

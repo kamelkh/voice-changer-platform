@@ -50,6 +50,12 @@ class AudioPipeline:
         # speech needs ~0.05).  Set via settings["processing"]["input_gain"].
         self.input_gain: float = 5.0  # +14 dB default
 
+        # Target output sample rate — when set, the RVC engine resamples
+        # its model output directly to this rate (e.g. 48 kHz) instead of
+        # back to the input rate (e.g. 16 kHz).  This avoids the very lossy
+        # 40k→16k→48k round-trip.  Set by the stream at startup.
+        self.output_sample_rate: Optional[int] = None
+
         # Cross-fade between consecutive chunks eliminates boundary
         # discontinuities that cause robotic / metallic artifacts.
         self._XFADE_LEN: int = 256  # samples (~5 ms at 48 kHz)
@@ -107,16 +113,21 @@ class AudioPipeline:
 
     # ── Processing ────────────────────────────────────────────────────────────
 
-    def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
+    def process(self, audio_data: np.ndarray, sample_rate: int,
+                output_sample_rate: int | None = None) -> np.ndarray:
         """
         Process a single audio chunk through the pipeline.
 
         Args:
             audio_data: Float32 NumPy array.
-            sample_rate: Sample rate in Hz.
+            sample_rate: Input sample rate in Hz.
+            output_sample_rate: Desired output sample rate.  When provided,
+                the RVC engine resamples directly to this rate, and
+                subsequent effects run at this rate too.
 
         Returns:
-            Processed float32 NumPy array of the same shape.
+            Processed float32 NumPy array (may be longer than input when
+            *output_sample_rate* > *sample_rate*).
         """
         t0 = time.perf_counter()
 
@@ -126,26 +137,30 @@ class AudioPipeline:
         result = audio_data.astype(np.float32)
 
         # ── Input gain boost ───────────────────────────────────────────
-        # Galaxy Buds / Bluetooth mics are extremely quiet.  We amplify
-        # early so every downstream effect gets a usable signal level.
-        # Uses soft tanh limiting instead of hard clip to avoid distortion.
         if self.input_gain != 1.0:
             result = np.tanh(result * self.input_gain).astype(np.float32)
 
         # Measure input RMS *after* gain boost (this is the effective input)
         in_rms = float(np.sqrt(np.mean(result ** 2))) + 1e-10
 
+        # Track the current sample rate — it may change after RVC
+        current_sr = sample_rate
+
         # AI voice conversion first
         if self._rvc_engine is not None:
             try:
+                # Tell the engine to output at the target rate directly
+                self._rvc_engine._output_sr = output_sample_rate
                 result = self._rvc_engine.convert(result, sample_rate)
+                if output_sample_rate:
+                    current_sr = output_sample_rate
             except Exception as exc:
                 logger.error("RVC conversion error: %s", exc)
 
-        # Then effects chain
+        # Then effects chain (at whichever rate the audio is now at)
         for effect in self._effects:
             try:
-                result = effect.process(result, sample_rate)
+                result = effect.process(result, current_sr)
             except Exception as exc:
                 logger.error("Effect %s error: %s", effect.name, exc)
 

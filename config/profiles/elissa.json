@@ -13,7 +13,7 @@
     "use_ai": true,
     "ai_model_path": "models/Elissa.pth",
     "ai_index_rate": 0.75,
-    "ai_pitch_shift": 0,
+    "ai_pitch_shift": 12,
     "ai_f0_method": "rmvpe",
     "ai_protect": 0.33,
     "ai_filter_radius": 3,
