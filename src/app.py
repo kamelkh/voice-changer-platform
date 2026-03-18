@@ -547,6 +547,7 @@ class VoiceChangerApp:
 
         # Update settings dict so they survive a stream restart
         self._settings.setdefault("audio", {})
+        self._settings.setdefault("processing", {})
         self._settings["audio"]["chunk_size"]  = chunk_size
         self._settings["audio"]["buffer_size"] = buffer_size
         self._settings["processing"]["latency_preset"] = preset_name

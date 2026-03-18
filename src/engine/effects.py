@@ -202,11 +202,14 @@ class FormantShifter(IAudioEffect):
 
         spec = np.fft.rfft(mono)
         freqs = np.arange(len(spec), dtype=np.float32)
+        # warped[i] = i/ratio is the source position in the original spectrum
+        # for each output bin i.  ratio > 1 → read from lower bins → stretch
+        # the spectrum upward (formants shift up).  ratio < 1 → compress down.
         warped = freqs / ratio
 
         # Use edge-value extrapolation (no left/right=0 zeroing)
-        real = np.interp(freqs, warped, spec.real)
-        imag = np.interp(freqs, warped, spec.imag)
+        real = np.interp(warped, freqs, spec.real)
+        imag = np.interp(warped, freqs, spec.imag)
         out = np.fft.irfft(real + 1j * imag)[:n].astype(np.float32)
         if len(out) < n:
             out = np.pad(out, (0, n - len(out)))
@@ -250,7 +253,9 @@ class NoiseGate(IAudioEffect):
         target = 1.0 if rms_db >= self.threshold_db else 0.0
 
         # Simple one-pole smoothing
-        tc = self.release_ms if target > self._gate_gain else self.attack_ms
+        # target > gate_gain means gate is opening → use attack time
+        # target < gate_gain means gate is closing → use release time
+        tc = self.attack_ms if target > self._gate_gain else self.release_ms
         coef = np.exp(-1.0 / max(1, sample_rate * tc / 1000.0))
         self._gate_gain = coef * self._gate_gain + (1.0 - coef) * target
 
