@@ -70,8 +70,11 @@ class TestNoiseGate(unittest.TestCase):
         effect = self._effect(threshold_db=-10.0)
         # Very quiet signal (−40 dB approximately)
         quiet = np.full(1024, 0.01, dtype=np.float32)
-        result = effect.process(quiet, 44100)
-        np.testing.assert_array_equal(result, np.zeros_like(quiet))
+        # The gate uses a smooth release envelope, so process several chunks
+        # to let the gain fully decay to 0 before asserting silence.
+        for _ in range(20):
+            result = effect.process(quiet, 44100)
+        np.testing.assert_array_almost_equal(result, np.zeros_like(quiet), decimal=3)
 
     def test_loud_signal_passes_through(self) -> None:
         effect = self._effect(threshold_db=-60.0)

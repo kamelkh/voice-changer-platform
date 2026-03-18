@@ -22,6 +22,7 @@ class TestAudioPipeline(unittest.TestCase):
 
     def test_empty_pipeline_passthrough(self) -> None:
         pipeline = self._make_pipeline()
+        pipeline.input_gain = 1.0  # disable default +14 dB boost for passthrough test
         audio = _sine()
         result = pipeline.process(audio, 44100)
         np.testing.assert_array_almost_equal(result, audio)
@@ -105,8 +106,8 @@ class TestAudioPipeline(unittest.TestCase):
             gain=1.2,
         )
         pipeline.load_from_profile(profile)
-        # Pipeline should have 5 effects
-        self.assertEqual(len(pipeline.get_effects()), 5)
+        # NoiseGate + PitchShifter + FormantShifter + Reverb + Compressor + VolumeControl = 6
+        self.assertEqual(len(pipeline.get_effects()), 6)
 
     def test_last_process_time_updated(self) -> None:
         pipeline = self._make_pipeline()

@@ -262,11 +262,11 @@ class NoiseGate(IAudioEffect):
         )
         target = 1.0 if rms_db >= self.threshold_db else 0.0
 
-        # Simple one-pole smoothing
-        # target > gate_gain means gate is opening → use attack time
-        # target < gate_gain means gate is closing → use release time
+        # One-pole smoothing advanced by the full chunk length so that the
+        # time constant is in real-time milliseconds regardless of chunk size.
         tc = self.attack_ms if target > self._gate_gain else self.release_ms
-        coef = np.exp(-1.0 / max(1, sample_rate * tc / 1000.0))
+        n_samples = len(audio_data)
+        coef = np.exp(-n_samples / max(1, sample_rate * tc / 1000.0))
         self._gate_gain = coef * self._gate_gain + (1.0 - coef) * target
 
         return (audio_data.astype(np.float32) * self._gate_gain).astype(audio_data.dtype)
@@ -434,7 +434,8 @@ class Compressor(IAudioEffect):
         )
 
         tc_ms = self.attack_ms if target_gain_db < self._gain_db else self.release_ms
-        coef = np.exp(-1.0 / max(1, sample_rate * tc_ms / 1000.0))
+        n_samples = len(audio_data)
+        coef = np.exp(-n_samples / max(1, sample_rate * tc_ms / 1000.0))
         self._gain_db = coef * self._gain_db + (1.0 - coef) * target_gain_db
 
         linear = 10.0 ** (self._gain_db / 20.0)

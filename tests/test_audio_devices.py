@@ -5,8 +5,19 @@ These tests run without real audio hardware by mocking sounddevice.
 """
 from __future__ import annotations
 
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
+
+# Pre-mock sounddevice at the sys.modules level so that importing
+# src.audio.devices does not trigger the PortAudio library check
+# (which fails in CI environments that have no audio hardware).
+if "sounddevice" not in sys.modules:
+    _sd_stub = MagicMock()
+    _sd_stub.query_devices.return_value = []
+    _sd_stub.default.device = (0, 1)
+    sys.modules["sounddevice"] = _sd_stub
+    sys.modules["_sounddevice"] = MagicMock()
 
 
 # ---------------------------------------------------------------------------
