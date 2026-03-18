@@ -10,7 +10,7 @@ NumPy/SciPy operations** – no Python-level per-sample loops.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import scipy.signal as signal
@@ -97,6 +97,8 @@ class PitchShifter(IAudioEffect):
     def __init__(self, semitones: float = 0.0) -> None:
         self.semitones = float(semitones)
         self._buf = np.array([], dtype=np.float32)
+        self._prev_out: Optional[np.ndarray] = None
+        _OVERLAP = 256  # boundary crossfade length (samples)
 
         # Detect torchaudio for high-quality GPU pitch shift
         self._torchaudio_ok = False
@@ -155,8 +157,17 @@ class PitchShifter(IAudioEffect):
         # Trim/pad to match input length exactly
         n = len(mono)
         if len(out) >= n:
-            return out[:n]
-        return np.concatenate([out, np.zeros(n - len(out), dtype=np.float32)])
+            out = out[:n]
+        else:
+            out = np.concatenate([out, np.zeros(n - len(out), dtype=np.float32)])
+        # Boundary crossfade to eliminate ringing at resample boundaries
+        ov = min(256, n // 4)
+        if self._prev_out is not None and len(self._prev_out) == ov:
+            fade_in  = np.linspace(0.0, 1.0, ov, dtype=np.float32)
+            fade_out = 1.0 - fade_in
+            out[:ov] = out[:ov] * fade_in + self._prev_out * fade_out
+        self._prev_out = out[-ov:].copy()
+        return out
 
     def _process_cpu(self, mono: np.ndarray) -> np.ndarray:
         """CPU pitch shift using linear interpolation (no FFT leakage).
@@ -191,10 +202,15 @@ class FormantShifter(IAudioEffect):
     Spectral-envelope warp to shift formants without changing pitch.
 
     Implemented as frequency-domain interpolation using rfft.
+    A short overlap crossfade is kept between chunks to eliminate
+    the boundary discontinuities that cause audible crackling.
     """
+
+    _OVERLAP = 256  # samples of crossfade at chunk boundaries
 
     def __init__(self, semitones: float = 0.0) -> None:
         self.semitones = float(semitones)
+        self._prev_out: Optional[np.ndarray] = None
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.semitones == 0.0:
@@ -229,6 +245,15 @@ class FormantShifter(IAudioEffect):
         out *= (in_rms / out_rms)
         out = np.clip(out, -1.0, 1.0).astype(np.float32)
 
+        # Boundary crossfade: blend the start of this chunk with the tail
+        # of the previous processed chunk to eliminate spectral discontinuities.
+        ov = min(self._OVERLAP, n // 4)
+        if self._prev_out is not None and len(self._prev_out) == ov:
+            fade_in  = np.linspace(0.0, 1.0, ov, dtype=np.float32)
+            fade_out = 1.0 - fade_in
+            out[:ov] = out[:ov] * fade_in + self._prev_out * fade_out
+        self._prev_out = out[-ov:].copy()
+
         return self._restore(out, was_2d, channels)
 
     def get_params(self) -> dict[str, Any]:
@@ -237,6 +262,7 @@ class FormantShifter(IAudioEffect):
     def set_params(self, params: dict[str, Any]) -> None:
         if "semitones" in params:
             self.semitones = float(params["semitones"])
+            self._prev_out = None   # reset on parameter change
 
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────
@@ -479,6 +505,9 @@ class VoiceDisguise(IAudioEffect):
         self._bp_a: np.ndarray | None = None
         self._bp_sr: int = 0
         self._noise_state: np.ndarray | None = None
+        # Smooth warp factor — changes gradually between chunks instead of
+        # jumping randomly, which eliminates per-chunk spectral discontinuities.
+        self._warp_smooth: float = 1.0
 
     def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
         if self.intensity == 0.0:
@@ -534,8 +563,11 @@ class VoiceDisguise(IAudioEffect):
         # ── 3. Formant smear – random spectral stretch per chunk ─────────
         spec = np.fft.rfft(modulated)
         n_bins = len(spec)
-        # Slight random warp factor that changes each chunk
-        warp = 1.0 + (np.random.rand() - 0.5) * 0.03 * self.intensity
+        # Smooth the warp factor with a one-pole filter so it drifts
+        # gradually rather than jumping per chunk (eliminates crackling).
+        warp_target = 1.0 + (np.random.rand() - 0.5) * 0.03 * self.intensity
+        self._warp_smooth = 0.85 * self._warp_smooth + 0.15 * warp_target
+        warp = self._warp_smooth
         old_bins = np.arange(n_bins, dtype=np.float32)
         new_bins = old_bins / warp
         # Edge-value extrapolation (no left=0/right=0 zeroing)

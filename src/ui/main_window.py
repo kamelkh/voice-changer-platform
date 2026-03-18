@@ -161,7 +161,7 @@ class MainWindow:
         )
         self._toggle_btn.pack(pady=(8, 4))
 
-        # Monitor button (hear your own processed voice)
+        # Monitor toggle button
         self._monitor_btn = tk.Button(
             right_panel,
             text="🎧  Monitor OFF",
@@ -177,7 +177,46 @@ class MainWindow:
             cursor="hand2",
             command=self._toggle_monitor,
         )
-        self._monitor_btn.pack(pady=(4, 4))
+        self._monitor_btn.pack(pady=(4, 2))
+
+        # Monitor RECORD / PLAY buttons (shown when monitor is ON)
+        self._monitor_controls = tk.Frame(right_panel, bg=DARK_BG)
+        # Not packed yet — shown only when monitor is enabled
+
+        self._record_btn = tk.Button(
+            self._monitor_controls,
+            text="🔴  RECORD",
+            font=("Segoe UI", 10, "bold"),
+            bg="#dc2626",
+            fg="white",
+            activebackground="#b91c1c",
+            activeforeground="white",
+            relief=tk.FLAT,
+            bd=0,
+            padx=16,
+            pady=8,
+            cursor="hand2",
+            command=self._on_record_click,
+        )
+        self._record_btn.pack(side=tk.LEFT, padx=(0, 4))
+
+        self._play_btn = tk.Button(
+            self._monitor_controls,
+            text="▶  PLAY",
+            font=("Segoe UI", 10, "bold"),
+            bg=DARK_SURFACE,
+            fg=SUBTEXT_COLOR,
+            activebackground="#1e3a5f",
+            activeforeground="white",
+            relief=tk.FLAT,
+            bd=0,
+            padx=16,
+            pady=8,
+            cursor="hand2",
+            command=self._on_play_click,
+            state=tk.DISABLED,
+        )
+        self._play_btn.pack(side=tk.LEFT)
 
         # Latency preset selector
         preset_frame = tk.Frame(right_panel, bg=DARK_BG)
@@ -234,23 +273,35 @@ class MainWindow:
                 self._status_bar.update_input_level(0)
                 self._status_bar.update_output_level(0)
 
-            # Update monitor button to reflect current state
+            # Update monitor buttons to reflect current state
             if self._app.monitor_enabled:
                 state = self._app.monitor_state
                 if state == "recording":
-                    self._monitor_btn.config(
-                        text="🔴  Recording...",
-                        bg="#dc2626", fg="white",
+                    self._record_btn.config(
+                        text="⏹  STOP REC",
+                        bg="#b91c1c", fg="white",
                     )
+                    self._play_btn.config(state=tk.DISABLED)
                 elif state == "playing":
-                    self._monitor_btn.config(
+                    self._record_btn.config(state=tk.DISABLED)
+                    self._play_btn.config(
                         text="🔊  Playing...",
                         bg="#16a34a", fg="white",
+                        state=tk.DISABLED,
                     )
                 else:
-                    self._monitor_btn.config(
-                        text="🎧  Monitor ON — Speak!",
-                        bg="#7c3aed", fg="white",
+                    # idle — ready to record or play
+                    self._record_btn.config(
+                        text="🔴  RECORD",
+                        bg="#dc2626", fg="white",
+                        state=tk.NORMAL,
+                    )
+                    has_buffer = len(self._app._monitor_buffer) > 0
+                    self._play_btn.config(
+                        text="▶  PLAY",
+                        bg="#16a34a" if has_buffer else DARK_SURFACE,
+                        fg="white" if has_buffer else SUBTEXT_COLOR,
+                        state=tk.NORMAL if has_buffer else tk.DISABLED,
                     )
         except Exception as exc:
             logger.debug("UI update error: %s", exc)
@@ -286,16 +337,17 @@ class MainWindow:
             self._status_bar.set_message("Voice changer stopped")
 
     def _toggle_monitor(self) -> None:
-        """Toggle voice monitoring (record-then-playback through headphones)."""
+        """Toggle monitor mode on/off."""
         enabled = self._app.toggle_monitor()
         if enabled:
             self._monitor_btn.config(
-                text="🎧  Monitor ON — Speak!",
+                text="🎧  Monitor ON",
                 bg="#7c3aed",
                 fg="white",
                 activebackground="#6d28d9",
             )
-            self._status_bar.set_message("🎧 Monitor ON — speak, then wait to hear playback")
+            self._monitor_controls.pack(pady=(2, 4))
+            self._status_bar.set_message("🎧 Monitor ON — press RECORD, then PLAY")
         else:
             self._monitor_btn.config(
                 text="🎧  Monitor OFF",
@@ -303,7 +355,26 @@ class MainWindow:
                 fg=SUBTEXT_COLOR,
                 activebackground="#1e3a5f",
             )
+            self._monitor_controls.pack_forget()
             self._status_bar.set_message("Monitor OFF")
+
+    def _on_record_click(self) -> None:
+        """Handle RECORD button click — toggle recording on/off."""
+        state = self._app.monitor_state
+        if state == "recording":
+            # Stop recording (but don't play yet)
+            if self._app.stream:
+                self._app.stream.set_monitor_callback(None)
+            self._app._monitor_state = "idle"
+            self._status_bar.set_message("🎧 Recording stopped — press PLAY to listen")
+        else:
+            self._app.start_monitor_recording()
+            self._status_bar.set_message("🔴 Recording... press STOP REC when done")
+
+    def _on_play_click(self) -> None:
+        """Handle PLAY button click — play recorded buffer."""
+        self._app.stop_monitor_recording_and_play()
+        self._status_bar.set_message("🔊 Playing back...")
 
     def _on_profile_selected(self, key: str, profile) -> None:
         """Called when a profile card is clicked.

@@ -52,7 +52,7 @@ class AudioPipeline:
 
         # Cross-fade between consecutive chunks eliminates boundary
         # discontinuities that cause robotic / metallic artifacts.
-        self._XFADE_LEN: int = 64  # samples (~4 ms at 16 kHz)
+        self._XFADE_LEN: int = 256  # samples (~5 ms at 48 kHz)
         self._prev_tail: Optional[np.ndarray] = None
 
     # ── Effect management ─────────────────────────────────────────────────────
@@ -128,8 +128,9 @@ class AudioPipeline:
         # ── Input gain boost ───────────────────────────────────────────
         # Galaxy Buds / Bluetooth mics are extremely quiet.  We amplify
         # early so every downstream effect gets a usable signal level.
+        # Uses soft tanh limiting instead of hard clip to avoid distortion.
         if self.input_gain != 1.0:
-            result = np.clip(result * self.input_gain, -1.0, 1.0).astype(np.float32)
+            result = np.tanh(result * self.input_gain).astype(np.float32)
 
         # Measure input RMS *after* gain boost (this is the effective input)
         in_rms = float(np.sqrt(np.mean(result ** 2))) + 1e-10
@@ -164,7 +165,14 @@ class AudioPipeline:
         xf = self._XFADE_LEN
         if self._prev_tail is not None and len(result) > xf:
             fade_in = np.linspace(0.0, 1.0, xf, dtype=np.float32)
-            result[:xf] = result[:xf] * fade_in + self._prev_tail * (1.0 - fade_in)
+            # Reshape fade to (xf, 1) when result is 2-D so broadcasting
+            # works correctly instead of producing (xf, xf).
+            if result.ndim == 2:
+                fade_in = fade_in[:, np.newaxis]
+            prev = self._prev_tail
+            if prev.ndim != result.ndim:
+                prev = prev.reshape(result[:xf].shape)
+            result[:xf] = result[:xf] * fade_in + prev * (1.0 - fade_in)
         if len(result) > xf:
             self._prev_tail = result[-xf:].copy()
 
