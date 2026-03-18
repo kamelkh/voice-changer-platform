@@ -202,11 +202,14 @@ class FormantShifter(IAudioEffect):
 
         spec = np.fft.rfft(mono)
         freqs = np.arange(len(spec), dtype=np.float32)
+        # warped[i] = i/ratio is the source position in the original spectrum
+        # for each output bin i.  ratio > 1 → read from lower bins → stretch
+        # the spectrum upward (formants shift up).  ratio < 1 → compress down.
         warped = freqs / ratio
 
         # Use edge-value extrapolation (no left/right=0 zeroing)
-        real = np.interp(freqs, warped, spec.real)
-        imag = np.interp(freqs, warped, spec.imag)
+        real = np.interp(warped, freqs, spec.real)
+        imag = np.interp(warped, freqs, spec.imag)
         out = np.fft.irfft(real + 1j * imag)[:n].astype(np.float32)
         if len(out) < n:
             out = np.pad(out, (0, n - len(out)))
@@ -250,7 +253,9 @@ class NoiseGate(IAudioEffect):
         target = 1.0 if rms_db >= self.threshold_db else 0.0
 
         # Simple one-pole smoothing
-        tc = self.release_ms if target > self._gate_gain else self.attack_ms
+        # target > gate_gain means gate is opening → use attack time
+        # target < gate_gain means gate is closing → use release time
+        tc = self.attack_ms if target > self._gate_gain else self.release_ms
         coef = np.exp(-1.0 / max(1, sample_rate * tc / 1000.0))
         self._gate_gain = coef * self._gate_gain + (1.0 - coef) * target
 
@@ -548,6 +553,228 @@ class VoiceDisguise(IAudioEffect):
             self.intensity = float(params["intensity"])
 
 
+# ── Accent Effect ─────────────────────────────────────────────────────────
+
+
+class AccentEffect(IAudioEffect):
+    """
+    Reshape the spectral character of a voice to suggest an Arabic dialect accent.
+
+    Three DSP layers are combined and scaled by *intensity* (0 = off, 1 = full):
+
+    1. **Formant warp** – frequency-domain spectral stretching/compression that
+       moves the vowel-space (F1/F2 centre positions) toward dialect norms.
+    2. **Band emphasis** – cosine-tapered EQ boost in a dialect-specific
+       frequency band that colours the consonantal/resonance character.
+    3. **Spectral tilt** – gentle overall slope adjustment (brighter / darker).
+
+    The band-gain mask is pre-computed once and cached between chunks so the
+    hot path only pays the cost of two FFTs + two vectorised multiplications.
+
+    When PyTorch + CUDA is available and the chunk is large enough (≥ 1024
+    samples) the FFT pair is offloaded to the GPU for lower latency.
+
+    *dialect* must be one of:
+        ``"palestinian"``, ``"syrian"``, ``"lebanese"``, ``"egyptian"``
+    """
+
+    # Parameters derived from Arabic dialectology literature.
+    # formant_ratio : spectral warp; >1 = fronted vowels, <1 = backed.
+    # emphasis_lo/hi: Hz boundaries of the cosine-tapered EQ band.
+    # emphasis_db   : peak boost inside the band (dB).
+    # spectral_tilt : >0 = brighter treble, <0 = darker bass.
+    DIALECT_PARAMS: dict[str, dict] = {
+        "palestinian": {
+            "formant_ratio":  0.94,   # backed vowels (lower F2)
+            "emphasis_lo":    800,
+            "emphasis_hi":   2500,
+            "emphasis_db":    3.0,
+            "spectral_tilt":  -0.4,
+        },
+        "syrian": {
+            "formant_ratio":  1.03,   # slightly fronted
+            "emphasis_lo":   1000,
+            "emphasis_hi":   3500,
+            "emphasis_db":    2.5,
+            "spectral_tilt":   0.3,
+        },
+        "lebanese": {
+            "formant_ratio":  1.07,   # fronted + raised (French influence)
+            "emphasis_lo":   1500,
+            "emphasis_hi":   4000,
+            "emphasis_db":    3.5,
+            "spectral_tilt":   0.8,
+        },
+        "egyptian": {
+            "formant_ratio":  0.90,   # most backed (pharyngeal resonance)
+            "emphasis_lo":    500,
+            "emphasis_hi":   2000,
+            "emphasis_db":    4.0,
+            "spectral_tilt":  -1.0,
+        },
+    }
+
+    # GPU is only worth it when CUDA kernel-launch overhead is amortised
+    # over enough samples (FFT size ≥ 1024).
+    _GPU_MIN_SAMPLES: int = 1024
+
+    def __init__(self, dialect: str = "palestinian",
+                 intensity: float = 0.5) -> None:
+        self.dialect   = dialect
+        self.intensity = float(np.clip(intensity, 0.0, 1.0))
+
+        # Cached band-gain + tilt mask — recomputed only when parameters or
+        # sample-rate change.  Avoids per-chunk recomputation of the mask.
+        self._mask_cache: np.ndarray | None = None
+        self._mask_sr:   int   = 0
+        self._mask_bins: int   = 0
+        self._mask_key:  tuple = ()    # (dialect, intensity)
+
+    # ── Mask computation (cached) ─────────────────────────────────────────
+
+    def _get_combined_mask(self, n_bins: int, sample_rate: int) -> np.ndarray:
+        """Return the pre-computed (band-gain × tilt) mask, using cache."""
+        key = (self.dialect, round(self.intensity, 4))
+        if (self._mask_cache is not None
+                and self._mask_sr  == sample_rate
+                and self._mask_bins == n_bins
+                and self._mask_key  == key):
+            return self._mask_cache
+
+        params   = self.DIALECT_PARAMS[self.dialect]
+        freqs    = np.arange(n_bins, dtype=np.float32)
+        nyq      = float(sample_rate) / 2.0
+        freq_hz  = freqs * nyq / max(n_bins - 1, 1)
+
+        # ── Band emphasis mask (cosine-tapered) ───────────────────────────
+        lo      = float(params["emphasis_lo"])
+        hi      = float(params["emphasis_hi"])
+        gain_db = float(params["emphasis_db"]) * self.intensity
+        gain    = 10.0 ** (gain_db / 20.0)
+        lo_fade = lo * 0.6
+        hi_fade = hi * 1.4
+
+        mask = np.ones(n_bins, dtype=np.float32)
+
+        rise = (freq_hz >= lo_fade) & (freq_hz < lo)
+        if rise.any():
+            t = (freq_hz[rise] - lo_fade) / (lo - lo_fade)
+            mask[rise] = 1.0 + (gain - 1.0) * (0.5 - 0.5 * np.cos(np.pi * t))
+
+        mask[(freq_hz >= lo) & (freq_hz <= hi)] = gain
+
+        fall = (freq_hz > hi) & (freq_hz <= hi_fade)
+        if fall.any():
+            t = (freq_hz[fall] - hi) / (hi_fade - hi)
+            mask[fall] = gain + (1.0 - gain) * (0.5 - 0.5 * np.cos(np.pi * t))
+
+        # ── Spectral tilt ─────────────────────────────────────────────────
+        tilt = float(params["spectral_tilt"]) * self.intensity
+        if tilt != 0.0:
+            exponent  = tilt * 0.15           # keep effect subtle (≤ ±3 dB)
+            norm_freq = np.clip(freq_hz / nyq, 0.01, 1.0)
+            mask     *= np.power(norm_freq, exponent).astype(np.float32)
+
+        self._mask_cache = mask
+        self._mask_sr    = sample_rate
+        self._mask_bins  = n_bins
+        self._mask_key   = key
+        return mask
+
+    # ── Process ───────────────────────────────────────────────────────────
+
+    def process(self, audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
+        if self.intensity == 0.0 or self.dialect not in self.DIALECT_PARAMS:
+            return audio_data
+
+        mono, was_2d, channels = self._to_mono_1d(audio_data)
+        n = len(mono)
+        if n < 32:
+            return audio_data
+
+        in_rms = float(np.sqrt(np.mean(mono ** 2))) + 1e-10
+
+        params = self.DIALECT_PARAMS[self.dialect]
+        ratio  = 1.0 + (params["formant_ratio"] - 1.0) * self.intensity
+
+        if (_TORCH_OK and _CUDA and n >= self._GPU_MIN_SAMPLES):
+            out = self._process_gpu(mono, sample_rate, ratio)
+        else:
+            out = self._process_cpu(mono, sample_rate, ratio)
+
+        # RMS preservation
+        out_rms = float(np.sqrt(np.mean(out ** 2))) + 1e-10
+        out *= in_rms / out_rms
+        out  = np.clip(out, -1.0, 1.0).astype(np.float32)
+        return self._restore(out, was_2d, channels)
+
+    def _process_cpu(self, mono: np.ndarray,
+                     sample_rate: int, ratio: float) -> np.ndarray:
+        n      = len(mono)
+        spec   = np.fft.rfft(mono)
+        n_bins = len(spec)
+        freqs  = np.arange(n_bins, dtype=np.float32)
+        warped = freqs / ratio
+
+        # Formant warp (stretch/compress spectral envelope)
+        real = np.interp(warped, freqs, spec.real)
+        imag = np.interp(warped, freqs, spec.imag)
+
+        # Apply cached band-emphasis + tilt mask in one multiply
+        mask          = self._get_combined_mask(n_bins, sample_rate)
+        warped_spec   = (real + 1j * imag) * mask
+
+        out = np.fft.irfft(warped_spec)[:n].astype(np.float32)
+        if len(out) < n:
+            out = np.pad(out, (0, n - len(out)))
+        return out
+
+    def _process_gpu(self, mono: np.ndarray,
+                     sample_rate: int, ratio: float) -> np.ndarray:
+        """GPU-accelerated path using torch.fft (CUDA)."""
+        n = len(mono)
+        t = torch.from_numpy(mono).to(_DEVICE)
+
+        spec   = torch.fft.rfft(t)           # complex tensor on GPU
+        n_bins = spec.shape[0]
+        freqs  = torch.arange(n_bins, dtype=torch.float32, device=_DEVICE)
+        warped = freqs / ratio
+
+        # torch does not have a GPU interp; use CPU for the warp then move back.
+        spec_cpu = spec.cpu()
+        real_np  = np.interp(warped.cpu().numpy(),
+                             freqs.cpu().numpy(), spec_cpu.real.numpy())
+        imag_np  = np.interp(warped.cpu().numpy(),
+                             freqs.cpu().numpy(), spec_cpu.imag.numpy())
+
+        mask        = self._get_combined_mask(n_bins, sample_rate)
+        mask_t      = torch.from_numpy(mask).to(_DEVICE)
+        warped_spec = torch.complex(
+            torch.from_numpy(real_np).to(_DEVICE),
+            torch.from_numpy(imag_np).to(_DEVICE),
+        ) * mask_t
+
+        out = torch.fft.irfft(warped_spec, n=n).cpu().numpy().astype(np.float32)
+        if len(out) < n:
+            out = np.pad(out, (0, n - len(out)))
+        return out
+
+    # ── Params ────────────────────────────────────────────────────────────
+
+    def get_params(self) -> dict[str, Any]:
+        return {"dialect": self.dialect, "intensity": self.intensity}
+
+    def set_params(self, params: dict[str, Any]) -> None:
+        if "dialect" in params and (
+                params["dialect"] in self.DIALECT_PARAMS
+                or params["dialect"] == "none"):
+            self.dialect     = params["dialect"]
+            self._mask_cache = None   # invalidate cache
+        if "intensity" in params:
+            self.intensity   = float(np.clip(params["intensity"], 0.0, 1.0))
+            self._mask_cache = None   # invalidate cache
+
+
 # ── Factory ───────────────────────────────────────────────────────────────
 
 EFFECT_REGISTRY: dict[str, type[IAudioEffect]] = {
@@ -558,6 +785,7 @@ EFFECT_REGISTRY: dict[str, type[IAudioEffect]] = {
     "volume":          VolumeControl,
     "compressor":      Compressor,
     "voice_disguise":  VoiceDisguise,
+    "accent":          AccentEffect,
 }
 
 

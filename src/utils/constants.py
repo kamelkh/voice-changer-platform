@@ -24,19 +24,23 @@ SETTINGS_FILE: Path = CONFIG_DIR / "settings.json"
 # 48 kHz is native for WASAPI / most voice apps (Zoom, Discord, WhatsApp)
 DEFAULT_SAMPLE_RATE: int = 48000
 DEFAULT_CHANNELS: int = 1
-# 512 frames @ 16 kHz = 32 ms per chunk — low latency while keeping FFT
-# effects working cleanly (minimum 512 samples for spectral processing).
-DEFAULT_CHUNK_SIZE: int = 512
-DEFAULT_BUFFER_SIZE: int = 2048
+# 1024 frames @ 48 kHz = 21.3 ms per chunk.
+# This gives the processing thread ~21 ms budget per chunk, which is enough
+# for FFT-based effects (PitchShifter, FormantShifter, AccentEffect, etc.)
+# without causing underruns on a typical PC.  512 was too tight and caused
+# the queue to fill up and chunks to be dropped (resulting in crackling).
+DEFAULT_CHUNK_SIZE: int = 1024
+DEFAULT_BUFFER_SIZE: int = 4096
 DEFAULT_DTYPE: str = "float32"
 
 # ── Low-latency presets ───────────────────────────────────────────────────────
-# Minimum 512 frames: FFT-based effects (PitchShifter, FormantShifter,
-# VoiceDisguise) need ≥512 samples to avoid spectral artefacts.
+# Minimum 512 frames: FFT-based effects need ≥512 samples to avoid artefacts.
+# The "low" preset is for powerful PCs (RTX GPU, fast CPU); "balanced" is the
+# recommended default; "safe" avoids any dropouts on modest hardware.
 LATENCY_PRESETS: dict = {
-    "low":     {"chunk_size": 512,  "buffer_size": 1024, "label": "Low    (~32 ms)"},
-    "balanced":{"chunk_size": 512,  "buffer_size": 2048, "label": "Balanced (~32 ms)"},
-    "safe":    {"chunk_size": 1024, "buffer_size": 4096, "label": "Safe   (~64 ms)"},
+    "low":     {"chunk_size": 512,  "buffer_size": 2048, "label": "Low    (~11 ms)"},
+    "balanced":{"chunk_size": 1024, "buffer_size": 4096, "label": "Balanced (~21 ms)"},
+    "safe":    {"chunk_size": 2048, "buffer_size": 8192, "label": "Safe   (~43 ms)"},
 }
 
 # ── VB-Audio Virtual Cable ────────────────────────────────────────────────────
